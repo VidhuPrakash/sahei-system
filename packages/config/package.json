@@ -1,0 +1,22 @@
+{
+  "name": "@sahei/config",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "eslint",
+    "tsconfig",
+    "tailwind"
+  ],
+  "exports": {
+    "./eslint/*": "./eslint/*",
+    "./tsconfig/*": "./tsconfig/*",
+    "./tailwind/*": "./tailwind/*"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.17.0",
+    "typescript-eslint": "^8.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "extends": "@sahei/config/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "incremental": true,
+    "outDir": "./dist",
+    "types": ["vitest/globals", "node"]
+  }
+}

@@ -1,0 +1,10 @@
+**/node_modules
+**/.turbo
+**/.next
+**/dist
+**/out
+.git
+.env
+.env.*
+!.env.example
+apps/voice-service

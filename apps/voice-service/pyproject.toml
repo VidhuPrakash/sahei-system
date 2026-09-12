@@ -1,0 +1,47 @@
+[project]
+name = "voice-service"
+version = "0.1.0"
+description = "Pipecat voice pipeline: Exotel telephony <-> Sarvam STT/TTS <-> Claude"
+readme = "README.md"
+authors = [
+    { name = "VidhuPrakash", email = "vidhuprakashchr1@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pipecat-ai>=0.0.55",
+    "anthropic>=0.40.0",
+    "python-dotenv>=1.0.1",
+    "websockets>=13.1",
+]
+
+[project.scripts]
+voice-service = "voice_service:main"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13.0",
+    "ruff>=0.8.0",
+    "black>=24.10.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
