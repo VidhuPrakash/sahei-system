@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "pipecat-ai[runner,sarvam]>=0.0.55",
+    "pipecat-ai[runner,sarvam,silero]>=0.0.55",
     "python-dotenv>=1.0.1",
     "websockets>=13.1",
     "loguru>=0.7.3",

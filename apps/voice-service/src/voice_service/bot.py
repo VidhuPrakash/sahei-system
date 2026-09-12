@@ -2,6 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from loguru import logger
+from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     Frame,
     LLMFullResponseEndFrame,
@@ -12,12 +13,16 @@ from pipecat.frames.frames import (
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.sarvam.stt import SarvamSTTService
+from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
@@ -31,10 +36,9 @@ load_dotenv(override=True)
 class AssistantResponseLogger(FrameProcessor):
     """Logs the LLM's full text reply via Loguru; passes all frames through unchanged.
 
-    Must sit before ``context_aggregator.assistant()`` — that aggregator consumes
-    LLMTextFrame internally without forwarding it, so this is the only point
-    downstream of the LLM where the streamed text is observable (stand-in for
-    where a TTS service will eventually consume it).
+    Must sit before the TTS service — TTS consumes LLMTextFrame internally without
+    forwarding it, so this is the only point downstream of the LLM where the
+    streamed text is observable.
     """
 
     def __init__(self) -> None:
@@ -55,7 +59,7 @@ class AssistantResponseLogger(FrameProcessor):
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
-    """Wire Sarvam STT -> Groq dialogue LLM -> logged text response (no TTS yet)."""
+    """Wire Sarvam STT -> Groq dialogue LLM -> Sarvam TTS -> spoken reply."""
     logger.info("Starting dialogue bot")
 
     stt = SarvamSTTService(
@@ -69,8 +73,18 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             system_instruction=BOOKING_SYSTEM_PROMPT,
         ),
     )
+    tts = SarvamTTSService(
+        api_key=os.environ["SARVAM_API_KEY"],
+        sample_rate=8000,
+        settings=SarvamTTSService.Settings(
+            model="bulbul:v3", voice="roopa", language=Language.ML_IN
+        ),
+    )
     context = LLMContext()
-    context_aggregator = LLMContextAggregatorPair(context)
+    context_aggregator = LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
+    )
     assistant_logger = AssistantResponseLogger()
 
     pipeline = Pipeline(
@@ -80,8 +94,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             context_aggregator.user(),
             llm,
             assistant_logger,
-            context_aggregator.assistant(),
+            tts,
             transport.output(),
+            context_aggregator.assistant(),
         ]
     )
     worker = PipelineWorker(
