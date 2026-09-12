@@ -1,15 +1,14 @@
 [project]
 name = "voice-service"
 version = "0.1.0"
-description = "Pipecat voice pipeline: Exotel telephony <-> Sarvam STT/TTS <-> Claude"
+description = "Pipecat voice pipeline: Exotel telephony <-> Sarvam STT/TTS <-> Groq"
 readme = "README.md"
 authors = [
     { name = "VidhuPrakash", email = "vidhuprakashchr1@gmail.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "pipecat-ai[runner]>=0.0.55",
-    "anthropic>=0.40.0",
+    "pipecat-ai[runner,sarvam]>=0.0.55",
     "python-dotenv>=1.0.1",
     "websockets>=13.1",
     "loguru>=0.7.3",
