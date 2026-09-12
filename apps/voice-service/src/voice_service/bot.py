@@ -1,16 +1,35 @@
+import os
+
 from dotenv import load_dotenv
 from loguru import logger
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
+from pipecat.frames.frames import (
+    Frame,
+    InputAudioRawFrame,
+    OutputAudioRawFrame,
+    TranscriptionFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.services.sarvam.stt import SarvamSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
 
 load_dotenv(override=True)
+
+
+class TranscriptLogger(FrameProcessor):
+    """Logs each finalized transcription and forwards every frame unchanged."""
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            logger.info(f"Transcript: {frame.text}")
+        await self.push_frame(frame, direction)
 
 
 class AudioEchoConverter(FrameProcessor):
@@ -37,10 +56,21 @@ class AudioEchoConverter(FrameProcessor):
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
-    """Wire an echo pipeline: audio in -> audio out, unprocessed."""
+    """Wire the pipeline: audio in -> Sarvam STT (logged) -> audio out (echo)."""
     logger.info("Starting echo bot")
 
-    pipeline = Pipeline([transport.input(), AudioEchoConverter(), transport.output()])
+    stt = SarvamSTTService(
+        api_key=os.environ["SARVAM_API_KEY"],
+        settings=SarvamSTTService.Settings(model="saaras:v3", language=Language.ML_IN),
+    )
+
+    @stt.event_handler("on_connection_error")  # type: ignore[untyped-decorator]
+    async def on_stt_connection_error(service: SarvamSTTService, error: str) -> None:
+        logger.error(f"Sarvam STT connection error: {error}")
+
+    pipeline = Pipeline(
+        [transport.input(), stt, TranscriptLogger(), AudioEchoConverter(), transport.output()]
+    )
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(
