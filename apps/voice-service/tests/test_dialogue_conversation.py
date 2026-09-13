@@ -158,8 +158,10 @@ async def test_tools_fire_during_happy_path_booking() -> None:
         await _run_turn(pipeline, assistant_logger, "എനിക്ക് ഒരു ഹെയർകട്ട് വേണം")
         # check_availability fires here — needs time for the tool round-trip
         # plus the follow-up completion, not just the initial one.
+        await _run_turn(pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്", sleep=15.0)
+        # The flow now asks for name + area before confirming — supply both.
         confirmation = await _run_turn(
-            pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്", sleep=15.0
+            pipeline, assistant_logger, "എന്റെ പേര് അനു, ഞാൻ എറണാകുളത്താണ്", sleep=15.0
         )
         # book_appointment fires here — same reasoning.
         final = await _run_turn(pipeline, assistant_logger, "അതെ, ശരിയാണ്", sleep=15.0)

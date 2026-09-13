@@ -42,6 +42,8 @@ async def _handle_book_appointment(params: FunctionCallParams) -> None:
     service = params.arguments.get("service", "")
     date = params.arguments.get("date", "")
     time = params.arguments.get("time", "")
+    customer_name = params.arguments.get("customer_name", "")
+    customer_area = params.arguments.get("customer_area", "")
     await params.result_callback(
         {
             "status": "confirmed",
@@ -49,6 +51,8 @@ async def _handle_book_appointment(params: FunctionCallParams) -> None:
             "service": service,
             "date": date,
             "time": time,
+            "customer_name": customer_name,
+            "customer_area": customer_area,
         }
     )
 
@@ -102,12 +106,20 @@ _BOOK_APPOINTMENT_SCHEMA = FunctionSchema(
             "type": "string",
             "description": "The confirmed time.",
         },
+        "customer_name": {
+            "type": "string",
+            "description": "The caller's name.",
+        },
+        "customer_area": {
+            "type": "string",
+            "description": "The caller's home area/locality.",
+        },
         "slot_reference": {
             "type": "string",
             "description": "The slot_reference returned by check_availability, if available.",
         },
     },
-    required=["service", "date", "time"],
+    required=["service", "date", "time", "customer_name", "customer_area"],
     handler=_handle_book_appointment,
 )
 
