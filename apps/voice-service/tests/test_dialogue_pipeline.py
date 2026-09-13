@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from pipecat.frames.frames import LLMRunFrame, MetricsFrame, TranscriptionFrame, TTSStartedFrame
 from pipecat.metrics.metrics import LLMTokenUsage, LLMUsageMetricsData, TTFBMetricsData
@@ -15,12 +16,14 @@ from pipecat.tests.utils import SleepFrame, run_test
 from pipecat.transcriptions.language import Language
 from pipecat.utils.time import time_now_iso8601
 
+from voice_service import tools
 from voice_service.bot import (
     AssistantResponseLogger,
     MetricsAndLatencyLogger,
     TranscriptInLogger,
     TurnTracker,
 )
+from voice_service.call_context import CallContext
 from voice_service.prompts import BOOKING_SYSTEM_PROMPT
 from voice_service.tools import BOOKING_TOOLS
 
@@ -67,9 +70,7 @@ def _mock_tool_call_chunks() -> AsyncIterator[Any]:
                             SimpleNamespace(
                                 index=0,
                                 id=TOOL_CALL_ID,
-                                function=SimpleNamespace(
-                                    name="check_availability", arguments=None
-                                ),
+                                function=SimpleNamespace(name="check_availability", arguments=None),
                             )
                         ],
                     ),
@@ -161,7 +162,28 @@ async def test_dialogue_pipeline_wiring() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dialogue_pipeline_tool_call_round_trip() -> None:
+async def test_dialogue_pipeline_tool_call_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `run_test` builds its own PipelineWorker with no app_resources, so the
+    # real check_availability handler needs one injected onto `params`
+    # directly, backed by a fake transport standing in for apps/api.
+    def _fake_booking_api(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"available": True})
+
+    call_context = CallContext(
+        business_id="test-business",
+        customer_phone="+910000000000",
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_booking_api)
+        ),
+    )
+    real_check = tools._HANDLERS["check_availability"]
+
+    async def _wrapped_check(params: Any) -> None:
+        params.app_resources = call_context
+        await real_check(params)
+
+    monkeypatch.setattr(tools._CHECK_AVAILABILITY_SCHEMA, "_handler", _wrapped_check, raising=False)
+
     llm = GroqLLMService(
         api_key="test-key",
         settings=GroqLLMService.Settings(
@@ -200,17 +222,18 @@ async def test_dialogue_pipeline_tool_call_round_trip() -> None:
         ],
     )
 
-    # The stub check_availability handler always reports available and echoes
-    # back the parsed arguments — confirms the schema's handler actually ran
-    # and the LLM service auto-continued into a second completion afterward.
+    # Confirms the schema's handler actually ran (hitting the fake booking API
+    # and reporting availability) and the LLM service auto-continued into a
+    # second completion afterward.
     messages = context.get_messages()
     tool_messages = [m for m in messages if m.get("role") == "tool"]
     assert len(tool_messages) == 1
     assert '"available": true' in str(tool_messages[0].get("content", "")).lower()
-    assert "ഹെയർകട്ട്" in str(tool_messages[0].get("content", ""))
 
     # The second (post-tool-result) completion round produced the final reply.
     assert assistant_logger.last_response == CANNED_REPLY
+
+    await call_context.http_client.aclose()
 
 
 @pytest.mark.asyncio
@@ -222,7 +245,10 @@ async def test_transcript_in_logger_starts_a_new_turn() -> None:
         Pipeline([transcript_logger]),
         frames_to_send=[
             TranscriptionFrame(
-                text="ഹലോ", user_id="test-user", timestamp=time_now_iso8601(), language=Language.ML_IN
+                text="ഹലോ",
+                user_id="test-user",
+                timestamp=time_now_iso8601(),
+                language=Language.ML_IN,
             ),
             SleepFrame(sleep=0.1),
         ],
@@ -280,9 +306,7 @@ async def test_metrics_logger_logs_each_metrics_kind_without_error() -> None:
                     LLMUsageMetricsData(
                         processor="llm",
                         model="llama-3.3-70b-versatile",
-                        value=LLMTokenUsage(
-                            prompt_tokens=10, completion_tokens=5, total_tokens=15
-                        ),
+                        value=LLMTokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
                     ),
                 ]
             ),

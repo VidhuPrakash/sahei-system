@@ -1,7 +1,10 @@
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+import httpx
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -40,10 +43,16 @@ from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
 
-from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT
+from voice_service.call_context import CallContext
+from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT, current_date_context
 from voice_service.tools import BOOKING_TOOLS
 
 load_dotenv(override=True)
+
+# Pilot scope: every call is assumed to be for this one hardcoded business,
+# operating on India Standard Time (matches ORG_CONTEXT). Real phone-number
+# to business/timezone resolution is a later multi-tenant session.
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 class AssistantResponseLogger(FrameProcessor):
@@ -186,6 +195,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         ),
     )
     llm.append_system_instruction(ORG_CONTEXT)
+    llm.append_system_instruction(current_date_context(datetime.now(BUSINESS_TIMEZONE)))
     tts = SarvamTTSService(
         api_key=os.environ["SARVAM_API_KEY"],
         sample_rate=8000,
@@ -217,6 +227,19 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             context_aggregator.assistant(),
         ]
     )
+
+    call_data = runner_args.call_data
+    customer_phone = (call_data.from_number if call_data else None) or "unknown"
+    call_context = CallContext(
+        business_id=os.environ["BUSINESS_ID"],
+        customer_phone=customer_phone,
+        http_client=httpx.AsyncClient(
+            base_url=os.environ["BOOKING_API_URL"],
+            headers={"x-api-key": os.environ["BOOKING_API_KEY"]},
+            timeout=10.0,
+        ),
+    )
+
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(
@@ -227,6 +250,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         # Exotel's telephony WebSocket never sends the RTVI client-ready handshake,
         # so the default RTVI processor blocks pipeline setup until it times out.
         enable_rtvi=False,
+        app_resources=call_context,
     )
 
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
@@ -242,7 +266,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         logger.info("Exotel call disconnected")
         await runner.cancel()
 
-    await runner.run()
+    try:
+        await runner.run()
+    finally:
+        await call_context.http_client.aclose()
 
 
 async def bot(runner_args: RunnerArguments) -> None:
