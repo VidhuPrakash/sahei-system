@@ -1,0 +1,243 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String       @id
+  name          String
+  email         String
+  emailVerified Boolean      @default(false)
+  image         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  members       Member[]
+  invitations   Invitation[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id                   String   @id
+  expiresAt            DateTime
+  token                String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganizationId String?
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Organization {
+  id          String       @id
+  name        String
+  slug        String
+  logo        String?
+  createdAt   DateTime
+  metadata    String?
+  members     Member[]
+  invitations Invitation[]
+
+  businessProfile BusinessProfile?
+
+  @@unique([slug])
+  @@map("organization")
+}
+
+model Member {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String       @default("member")
+  createdAt      DateTime
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("member")
+}
+
+model Invitation {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String?
+  status         String       @default("pending")
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  inviterId      String
+  user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitation")
+}
+
+/// One row per organization's business. orgId is the tenant boundary —
+/// Service / BusinessHours / Appointment stay scoped through businessId and
+/// inherit tenancy transitively through this relation, so they never need
+/// their own orgId column.
+model BusinessProfile {
+  id          String   @id @default(cuid())
+  /// FK to better-auth's organization table. Unique: one business per org
+  /// for this pilot model.
+  orgId       String   @unique @map("org_id")
+  name        String
+  nameLocal   String?  @map("name_local")
+  location    String?
+  description String?  @db.Text
+  /// Freeform FAQ-style notes (parking, walk-ins, payment methods, etc.) —
+  /// eventual source of truth for voice-service's ORG_CONTEXT string.
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  organization  Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  services      Service[]
+  businessHours BusinessHours[]
+  appointments  Appointment[]
+  inquiries     Inquiry[]
+
+  @@map("business_profiles")
+}
+
+model Service {
+  id              String   @id @default(cuid())
+  businessId      String   @map("business_id")
+  name            String
+  /// Local-language name (e.g. Malayalam) — callers name services in the
+  /// call's language, not English, so booking lookups match against this too.
+  nameLocal       String?  @map("name_local")
+  description     String?  @db.Text
+  durationMinutes Int      @map("duration_minutes")
+  price           Decimal  @db.Decimal(10, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  business     BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@map("services")
+}
+
+/// dayOfWeek: 0 = Sunday .. 6 = Saturday (matches JS Date#getDay()).
+/// open/close stored as minutes-since-midnight ints, not a Postgres `time`
+/// column — Prisma models `time` as DateTime @db.Time, which round-trips
+/// through JS Date and is a timezone footgun. Plain ints are trivial to
+/// validate/compare.
+model BusinessHours {
+  id         String   @id @default(cuid())
+  businessId String   @map("business_id")
+  dayOfWeek  Int      @map("day_of_week")
+  openTime   Int      @map("open_time_minutes")
+  closeTime  Int      @map("close_time_minutes")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, dayOfWeek])
+  @@map("business_hours")
+}
+
+enum AppointmentStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+
+  @@map("appointment_status")
+}
+
+model Appointment {
+  id               String            @id @default(cuid())
+  businessId       String            @map("business_id")
+  serviceId        String            @map("service_id")
+  customerName     String            @map("customer_name")
+  customerPhone    String            @map("customer_phone")
+  scheduledAt      DateTime          @map("scheduled_at") @db.Timestamptz(3)
+  status           AppointmentStatus @default(CONFIRMED)
+  bookingReference String            @unique @map("booking_reference")
+  notes            String?           @db.Text
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  business BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  service  Service         @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@index([scheduledAt])
+  @@map("appointments")
+}
+
+enum InquiryCategory {
+  BUSINESS_QUESTION
+  OFF_TOPIC
+  NO_BOOKING_NEEDED
+  OTHER
+
+  @@map("inquiry_category")
+}
+
+/// Telemetry for turns that go off the booking rails — a business question,
+/// an off-topic remark, or a call that wasn't about booking at all. Written
+/// by voice-service's log_inquiry tool; not part of the booking flow itself.
+model Inquiry {
+  id         String          @id @default(cuid())
+  businessId String          @map("business_id")
+  category   InquiryCategory
+  summary    String          @db.Text
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  business BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@map("inquiries")
+}

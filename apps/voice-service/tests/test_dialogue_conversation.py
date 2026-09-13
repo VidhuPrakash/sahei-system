@@ -1,7 +1,10 @@
 import os
 import re
 import sys
+from collections.abc import AsyncIterator
+from typing import Any
 
+import httpx
 import pytest
 from pipecat.frames.frames import LLMRunFrame, TranscriptionFrame
 from pipecat.pipeline.pipeline import Pipeline
@@ -14,6 +17,7 @@ from pipecat.utils.time import time_now_iso8601
 
 from voice_service import tools
 from voice_service.bot import AssistantResponseLogger
+from voice_service.call_context import CallContext
 from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT
 from voice_service.tools import BOOKING_TOOLS
 
@@ -28,6 +32,63 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("GROQ_API_KEY"),
     reason="requires a live GROQ_API_KEY",
 )
+
+
+def _fake_booking_api(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/booking/check-availability":
+        return httpx.Response(200, json={"available": True})
+    if request.url.path == "/booking/book-appointment":
+        return httpx.Response(200, json={"status": "confirmed", "bookingReference": "TESTREF1"})
+    if request.url.path == "/booking/log-inquiry":
+        return httpx.Response(200, json={"logged": True, "inquiryId": "test-inquiry"})
+    return httpx.Response(404)
+
+
+@pytest.fixture(autouse=True)
+async def _wire_tool_handlers_to_fake_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[CallContext]:
+    """These tests build a raw Pipeline (see `_make_pipeline`), never a
+    PipelineWorker, so there's no `app_resources` for the real tool handlers
+    to read — inject a CallContext backed by a fake apps/api instead, so
+    check_availability/book_appointment/log_inquiry behave like a real,
+    healthy backend rather than hitting tools.py's network-failure fallback."""
+    call_context = CallContext(
+        business_id="test-business",
+        customer_phone="+910000000000",
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_booking_api)
+        ),
+    )
+
+    def _inject(handler: Any) -> Any:
+        async def _wrapped(params: Any) -> None:
+            params.app_resources = call_context
+            await handler(params)
+
+        return _wrapped
+
+    monkeypatch.setattr(
+        tools._CHECK_AVAILABILITY_SCHEMA,
+        "_handler",
+        _inject(tools._HANDLERS["check_availability"]),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tools._BOOK_APPOINTMENT_SCHEMA,
+        "_handler",
+        _inject(tools._HANDLERS["book_appointment"]),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tools._LOG_INQUIRY_SCHEMA,
+        "_handler",
+        _inject(tools._HANDLERS["log_inquiry"]),
+        raising=False,
+    )
+
+    yield call_context
+    await call_context.http_client.aclose()
 
 
 async def _run_turn(
@@ -95,7 +156,11 @@ async def test_happy_path_greet_ask_confirm() -> None:
     ask_time = await _run_turn(pipeline, assistant_logger, "എനിക്ക് ഒരു ഹെയർകട്ട് വേണം")
     assert MALAYALAM_SCRIPT.search(ask_time)
 
-    confirmation = await _run_turn(pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്")
+    # check_availability fires here — needs time for the tool round-trip plus
+    # the follow-up completion, not just the initial one.
+    confirmation = await _run_turn(
+        pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്", sleep=15.0
+    )
     assert MALAYALAM_SCRIPT.search(confirmation)
 
 
@@ -131,12 +196,14 @@ async def test_off_flow_question_answered_from_org_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tools_fire_during_happy_path_booking() -> None:
+async def test_tools_fire_during_happy_path_booking(monkeypatch: pytest.MonkeyPatch) -> None:
     """Confirms check_availability and book_appointment actually get called
     (not just that the reply looks plausible) against the live model."""
     calls: dict[str, int] = {"check_availability": 0, "book_appointment": 0}
-    real_check = tools._STUB_HANDLERS["check_availability"]
-    real_book = tools._STUB_HANDLERS["book_appointment"]
+    # The autouse fixture already wired these to the fake backend — layer
+    # call counting on top of that, rather than the raw stub handlers.
+    real_check = tools._CHECK_AVAILABILITY_SCHEMA._handler
+    real_book = tools._BOOK_APPOINTMENT_SCHEMA._handler
 
     async def _wrapped_check(params: object) -> None:
         calls["check_availability"] += 1
@@ -146,29 +213,24 @@ async def test_tools_fire_during_happy_path_booking() -> None:
         calls["book_appointment"] += 1
         await real_book(params)
 
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(
-        tools._CHECK_AVAILABILITY_SCHEMA, "_handler", _wrapped_check, raising=False
-    )
+    monkeypatch.setattr(tools._CHECK_AVAILABILITY_SCHEMA, "_handler", _wrapped_check, raising=False)
     monkeypatch.setattr(tools._BOOK_APPOINTMENT_SCHEMA, "_handler", _wrapped_book, raising=False)
-    try:
-        pipeline, assistant_logger = _make_pipeline()
 
-        await _run_turn(pipeline, assistant_logger, "ഹലോ")
-        await _run_turn(pipeline, assistant_logger, "എനിക്ക് ഒരു ഹെയർകട്ട് വേണം")
-        # check_availability fires here — needs time for the tool round-trip
-        # plus the follow-up completion, not just the initial one.
-        await _run_turn(pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്", sleep=15.0)
-        # The flow now asks for name + area before confirming — supply both.
-        confirmation = await _run_turn(
-            pipeline, assistant_logger, "എന്റെ പേര് അനു, ഞാൻ എറണാകുളത്താണ്", sleep=15.0
-        )
-        # book_appointment fires here — same reasoning.
-        final = await _run_turn(pipeline, assistant_logger, "അതെ, ശരിയാണ്", sleep=15.0)
+    pipeline, assistant_logger = _make_pipeline()
 
-        assert MALAYALAM_SCRIPT.search(confirmation)
-        assert MALAYALAM_SCRIPT.search(final)
-        assert calls["check_availability"] >= 1
-        assert calls["book_appointment"] >= 1
-    finally:
-        monkeypatch.undo()
+    await _run_turn(pipeline, assistant_logger, "ഹലോ")
+    await _run_turn(pipeline, assistant_logger, "എനിക്ക് ഒരു ഹെയർകട്ട് വേണം")
+    # check_availability fires here — needs time for the tool round-trip
+    # plus the follow-up completion, not just the initial one.
+    await _run_turn(pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്", sleep=15.0)
+    # The flow now asks for name + area before confirming — supply both.
+    confirmation = await _run_turn(
+        pipeline, assistant_logger, "എന്റെ പേര് അനു, ഞാൻ എറണാകുളത്താണ്", sleep=15.0
+    )
+    # book_appointment fires here — same reasoning.
+    final = await _run_turn(pipeline, assistant_logger, "അതെ, ശരിയാണ്", sleep=15.0)
+
+    assert MALAYALAM_SCRIPT.search(confirmation)
+    assert MALAYALAM_SCRIPT.search(final)
+    assert calls["check_availability"] >= 1
+    assert calls["book_appointment"] >= 1

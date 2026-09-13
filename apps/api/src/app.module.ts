@@ -1,9 +1,22 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { PrismaModule } from './prisma/prisma.module.js';
+import { BusinessProfileModule } from './modules/business-profile/business-profile.module.js';
+import { ServicesModule } from './modules/services/services.module.js';
+import { BusinessHoursModule } from './modules/business-hours/business-hours.module.js';
+import { AppointmentsModule } from './modules/appointments/appointments.module.js';
+import { BookingModule } from './modules/booking/booking.module.js';
 
 @Module({
-  imports: [],
+  imports: [
+    PrismaModule,
+    BusinessProfileModule,
+    ServicesModule,
+    BusinessHoursModule,
+    AppointmentsModule,
+    BookingModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

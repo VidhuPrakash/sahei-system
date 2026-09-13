@@ -1,4 +1,4 @@
-"""Malayalam prompt content for the dialogue node, kept in two distinct pieces:
+"""Malayalam prompt content for the dialogue node, kept in three distinct pieces:
 
 - `BOOKING_SYSTEM_PROMPT`: the fixed conversational flow — greet, collect
   service/date/time, check availability, confirm, book, and how to handle
@@ -11,7 +11,13 @@
   the business knowledge stay architecturally distinct. Hardcoded for one
   pilot business; real per-org data arrives once Session 07's data model and
   Session 11's multi-tenant schema exist.
+- `current_date_context()`: today's date in the business's timezone, appended
+  the same way as `ORG_CONTEXT`. The check_availability/book_appointment tools
+  require an ISO date, and the caller only ever gives a relative one ("നാളെ" /
+  tomorrow) — the model needs to know "today" to resolve that itself.
 """
+
+from datetime import datetime
 
 BOOKING_SYSTEM_PROMPT = """\
 നിങ്ങൾ ഒരു അപ്പോയിന്റ്മെന്റ് ബുക്കിംഗ് അസിസ്റ്റന്റ് ആണ്. ഫോണിൽ വിളിക്കുന്ന \
@@ -24,7 +30,10 @@ BOOKING_SYSTEM_PROMPT = """\
 2. സേവനവും സമയവും: ഏത് സേവനമാണ് വേണ്ടതെന്നും, ഏത് തീയതി/സമയത്താണ് \
    വേണ്ടതെന്നും വ്യക്തമായി ചോദിച്ചു മനസ്സിലാക്കുക.
 3. ലഭ്യത പരിശോധന: സേവനവും തീയതി/സമയവും ലഭിച്ചാൽ ഉടൻ, ഇത് ഉപഭോക്താവിനോട് \
-   പറയാതെ check_availability എന്ന ടൂൾ വിളിച്ച് ലഭ്യത പരിശോധിക്കുക.
+   പറയാതെ check_availability എന്ന ടൂൾ വിളിച്ച് ലഭ്യത പരിശോധിക്കുക. ടൂളിലേക്ക് \
+   തീയതി എപ്പോഴും YYYY-MM-DD എന്ന ഫോർമാറ്റിലും, സമയം 24 മണിക്കൂർ HH:mm \
+   ഫോർമാറ്റിലും (ഉദാ: ഇന്നത്തെ തീയതി അറിയാമെങ്കിൽ "നാളെ" എന്നത് കണക്കാക്കി) \
+   നൽകുക — ഉപഭോക്താവ് പറഞ്ഞ വാക്കുകൾ അതേപടി അല്ല.
 4. പേരും സ്ഥലവും: ലഭ്യത ഉണ്ടെന്ന് സ്ഥിരീകരിച്ച ശേഷം, ബുക്ക് ചെയ്യുന്നതിന് \
    മുൻപ് ഉപഭോക്താവിന്റെ പേരും ഏത് സ്ഥലത്താണ് (പ്രദേശം) താമസിക്കുന്നതെന്നും \
    ചോദിച്ചു മനസ്സിലാക്കുക.
@@ -34,6 +43,12 @@ BOOKING_SYSTEM_PROMPT = """\
    book_appointment എന്ന ടൂൾ വിളിക്കുക (പേരും സ്ഥലവും ഉൾപ്പെടെ). അതിനുശേഷം \
    മാത്രം, അപ്പോയിന്റ്മെന്റ് ഉറപ്പാക്കിയെന്ന് ഉപഭോക്താവിനോട് പറയുക — ടൂളിന്റെ \
    ഫലത്തിൽ നിന്നുള്ള ബുക്കിംഗ് റഫറൻസ് സ്വാഭാവികമായി പരാമർശിക്കാം.
+
+check_availability അല്ലെങ്കിൽ book_appointment ടൂളിന്റെ ഫലത്തിൽ "error" എന്ന \
+ഫീൽഡ് ഉണ്ടെങ്കിൽ (ഇത് സ്ലോട്ട് ലഭ്യമല്ലാത്തതല്ല, ഒരു സാങ്കേതിക തകരാർ ആണ്): \
+സ്ലോട്ട് ലഭ്യമല്ലെന്നോ ബുക്കിംഗ് പരാജയപ്പെട്ടെന്നോ ഒരിക്കലും അവകാശപ്പെടരുത് — \
+പകരം ക്ഷമാപണത്തോടെ ഒരു സാങ്കേതിക പ്രശ്നം ഉണ്ടായെന്ന് അറിയിച്ച്, അല്പസമയത്തിനു \
+ശേഷം വീണ്ടും ശ്രമിക്കാൻ ഉപഭോക്താവിനോട് പറയുക.
 
 ബുക്കിംഗുമായി ബന്ധമില്ലാത്ത എന്തെങ്കിലും (ബിസിനസ്സിനെക്കുറിച്ചുള്ള ചോദ്യങ്ങൾ, \
 വ്യക്തമല്ലാത്തതോ വിഷയവുമായി ബന്ധമില്ലാത്തതോ ആയ കാര്യങ്ങൾ) ഉപഭോക്താവ് പറഞ്ഞാൽ:
@@ -61,3 +76,10 @@ ORG_CONTEXT = """\
 മറ്റ് വിവരങ്ങൾ: മുൻകൂട്ടി ബുക്ക് ചെയ്യാതെയും വരാം, എന്നാൽ വാരാന്ത്യങ്ങളിൽ \
 മുൻകൂട്ടി ബുക്ക് ചെയ്യുന്നതാണ് നല്ലത്. കാഷും കാർഡും രണ്ടും സ്വീകരിക്കും.
 """
+
+
+def current_date_context(today: datetime) -> str:
+    """Malayalam system instruction giving the model "today", so it can resolve
+    a relative date the caller says ("നാളെ" / tomorrow) into the ISO date the
+    check_availability/book_appointment tools require."""
+    return f'ഇന്നത്തെ തീയതി {today.strftime("%Y-%m-%d")} ആണ്.'

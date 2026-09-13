@@ -47,28 +47,8 @@ services:
       redis:
         condition: service_healthy
 
-  frontend:
-    build:
-      context: .
-      dockerfile: apps/frontend/Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-      PORT: "3000"
-    ports:
-      - "3000:3000"
-    depends_on:
-      - api
-
-  voice-service:
-    build:
-      context: apps/voice-service
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      - api
+  # voice-service runs independently (uv run), not through Turborepo/compose —
+  # see apps/voice-service/.env and CLAUDE.md.
 
 volumes:
   postgres-data:

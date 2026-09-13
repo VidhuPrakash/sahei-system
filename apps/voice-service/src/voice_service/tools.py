@@ -7,63 +7,106 @@ needed):
 
 - `check_availability` / `book_appointment`: the actions in the scripted
   booking flow (see `prompts.BOOKING_SYSTEM_PROMPT`) that need a real backend
-  round-trip. Stubbed for now — always succeeds, returns fake reference ids.
-  A real availability/booking backend is Session 07/11 scope.
+  round-trip. Each handler POSTs to the `apps/api` booking endpoints via the
+  shared `httpx.AsyncClient` on `CallContext` (see `call_context.py`),
+  reachable through `FunctionCallParams.app_resources`.
 - `log_inquiry`: telemetry, not a Q&A tool. Fired whenever a turn goes off the
   booking rails (a business question answered from org context, an off-topic
   remark, an explicit non-booking call) so the outcome is recorded somewhere,
   without adding a tool per possible question.
+
+On a backend/network failure, handlers return a safe failure result to the
+LLM instead of raising — a backend hiccup should end the tool call, not crash
+the call's audio pipeline.
 """
 
 from typing import Any
-from uuid import uuid4
 
+import httpx
+from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
 
+from voice_service.call_context import CallContext
+
+# Pilot scope: the one hardcoded business's exact service names, both the
+# English catalog name (Service.name) and Malayalam name (Service.nameLocal)
+# in apps/api's seed data. Constraining the LLM to this enum avoids
+# fuzzy-matching free-form spoken Malayalam against the backend — e.g.
+# "ഹെയർ കട്ടിങ്" (a caller's natural phrasing) and "ഹെയർകട്ട്" (the catalog
+# name) are different letter sequences, not just spacing, so no
+# normalization on the backend can reliably bridge them. Both language forms
+# are offered so the LLM can pick whichever it naturally reaches for.
+_SERVICE_NAMES = [
+    "Haircut",
+    "ഹെയർകട്ട്",
+    "Hair Coloring",
+    "ഹെയർ കളറിംഗ്",
+    "Facial",
+    "ഫേഷ്യൽ",
+    "Beauty Treatment",
+    "ബ്യൂട്ടി ട്രീറ്റ്മെന്റുകൾ",
+]
+
 
 async def _handle_check_availability(params: FunctionCallParams) -> None:
-    service = params.arguments.get("service", "")
-    date = params.arguments.get("date", "")
-    time = params.arguments.get("time", "")
-    await params.result_callback(
-        {
-            "available": True,
-            "service": service,
-            "date": date,
-            "time": time,
-            "slot_reference": f"SLOT-{uuid4().hex[:8]}",
-        }
-    )
+    ctx: CallContext = params.app_resources
+    payload = {
+        "businessId": ctx.business_id,
+        "service": params.arguments.get("service", ""),
+        "date": params.arguments.get("date", ""),
+        "time": params.arguments.get("time", ""),
+    }
+    try:
+        response = await ctx.http_client.post("/booking/check-availability", json=payload)
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError as exc:
+        logger.error("check_availability request failed: {}", exc)
+        result = {"error": "backend_unavailable"}
+    await params.result_callback(result)
 
 
 async def _handle_book_appointment(params: FunctionCallParams) -> None:
-    service = params.arguments.get("service", "")
-    date = params.arguments.get("date", "")
-    time = params.arguments.get("time", "")
-    customer_name = params.arguments.get("customer_name", "")
-    customer_area = params.arguments.get("customer_area", "")
-    await params.result_callback(
-        {
-            "status": "confirmed",
-            "booking_id": f"BOOK-{uuid4().hex[:8]}",
-            "service": service,
-            "date": date,
-            "time": time,
-            "customer_name": customer_name,
-            "customer_area": customer_area,
-        }
-    )
+    ctx: CallContext = params.app_resources
+    payload = {
+        "businessId": ctx.business_id,
+        "service": params.arguments.get("service", ""),
+        "date": params.arguments.get("date", ""),
+        "time": params.arguments.get("time", ""),
+        "customerName": params.arguments.get("customer_name", ""),
+        "customerArea": params.arguments.get("customer_area", ""),
+    }
+    try:
+        response = await ctx.http_client.post(
+            "/booking/book-appointment",
+            json=payload,
+            headers={"x-customer-phone": ctx.customer_phone},
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError as exc:
+        logger.error("book_appointment request failed: {}", exc)
+        result = {"error": "backend_unavailable"}
+    await params.result_callback(result)
 
 
 async def _handle_log_inquiry(params: FunctionCallParams) -> None:
-    await params.result_callback(
-        {
-            "logged": True,
-            "inquiry_id": f"INQ-{uuid4().hex[:8]}",
-        }
-    )
+    ctx: CallContext = params.app_resources
+    payload = {
+        "businessId": ctx.business_id,
+        "category": params.arguments.get("category", "other"),
+        "summary": params.arguments.get("summary", ""),
+    }
+    try:
+        response = await ctx.http_client.post("/booking/log-inquiry", json=payload)
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPError as exc:
+        logger.error("log_inquiry request failed: {}", exc)
+        result = {"logged": False}
+    await params.result_callback(result)
 
 
 _CHECK_AVAILABILITY_SCHEMA = FunctionSchema(
@@ -75,15 +118,16 @@ _CHECK_AVAILABILITY_SCHEMA = FunctionSchema(
     properties={
         "service": {
             "type": "string",
-            "description": "The service requested, in the caller's own words.",
+            "enum": _SERVICE_NAMES,
+            "description": "The catalog service name matching what the caller asked for.",
         },
         "date": {
             "type": "string",
-            "description": "The requested date, as the caller stated it.",
+            "description": "The requested date as an ISO 8601 date (YYYY-MM-DD), resolved from what the caller said.",
         },
         "time": {
             "type": "string",
-            "description": "The requested time, as the caller stated it.",
+            "description": "The requested time as 24-hour HH:mm, resolved from what the caller said.",
         },
     },
     required=["service", "date", "time"],
@@ -96,15 +140,16 @@ _BOOK_APPOINTMENT_SCHEMA = FunctionSchema(
     properties={
         "service": {
             "type": "string",
-            "description": "The confirmed service.",
+            "enum": _SERVICE_NAMES,
+            "description": "The confirmed catalog service name.",
         },
         "date": {
             "type": "string",
-            "description": "The confirmed date.",
+            "description": "The confirmed date as an ISO 8601 date (YYYY-MM-DD).",
         },
         "time": {
             "type": "string",
-            "description": "The confirmed time.",
+            "description": "The confirmed time as 24-hour HH:mm.",
         },
         "customer_name": {
             "type": "string",
@@ -113,10 +158,6 @@ _BOOK_APPOINTMENT_SCHEMA = FunctionSchema(
         "customer_area": {
             "type": "string",
             "description": "The caller's home area/locality.",
-        },
-        "slot_reference": {
-            "type": "string",
-            "description": "The slot_reference returned by check_availability, if available.",
         },
     },
     required=["service", "date", "time", "customer_name", "customer_area"],
@@ -155,8 +196,8 @@ BOOKING_TOOLS: ToolsSchema = ToolsSchema(
 
 __all__: list[str] = ["BOOKING_TOOLS"]
 
-# Re-exported for tests that want to wrap/monkeypatch the real stub logic.
-_STUB_HANDLERS: dict[str, Any] = {
+# Re-exported for tests that want to wrap/monkeypatch the real handler logic.
+_HANDLERS: dict[str, Any] = {
     "check_availability": _handle_check_availability,
     "book_appointment": _handle_book_appointment,
     "log_inquiry": _handle_log_inquiry,
