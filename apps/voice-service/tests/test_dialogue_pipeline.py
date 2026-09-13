@@ -22,8 +22,11 @@ from voice_service.bot import (
     TurnTracker,
 )
 from voice_service.prompts import BOOKING_SYSTEM_PROMPT
+from voice_service.tools import BOOKING_TOOLS
 
 CANNED_REPLY = "എന്ത് സഹായമാണ് വേണ്ടത്?"
+TOOL_CALL_ID = "call_1"
+FAKE_ARGS = '{"service": "ഹെയർകട്ട്", "date": "നാളെ", "time": "രാവിലെ 10 മണി"}'
 
 
 def _mock_stream_chunks() -> AsyncIterator[Any]:
@@ -51,6 +54,62 @@ def _mock_stream_chunks() -> AsyncIterator[Any]:
     return _gen()
 
 
+def _mock_tool_call_chunks() -> AsyncIterator[Any]:
+    async def _gen() -> AsyncIterator[Any]:
+        yield SimpleNamespace(
+            model="llama-3.3-70b-versatile",
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                index=0,
+                                id=TOOL_CALL_ID,
+                                function=SimpleNamespace(
+                                    name="check_availability", arguments=None
+                                ),
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
+            ],
+        )
+        yield SimpleNamespace(
+            model="llama-3.3-70b-versatile",
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                index=0,
+                                id=TOOL_CALL_ID,
+                                function=SimpleNamespace(name=None, arguments=FAKE_ARGS),
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
+            ],
+        )
+        yield SimpleNamespace(
+            model="llama-3.3-70b-versatile",
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content=None, tool_calls=None),
+                    finish_reason="tool_calls",
+                )
+            ],
+        )
+
+    return _gen()
+
+
 @pytest.mark.asyncio
 async def test_dialogue_pipeline_wiring() -> None:
     llm = GroqLLMService(
@@ -64,7 +123,7 @@ async def test_dialogue_pipeline_wiring() -> None:
         return_value=_mock_stream_chunks()
     )
 
-    context = LLMContext()
+    context = LLMContext(tools=BOOKING_TOOLS)
     context_aggregator = LLMContextAggregatorPair(context)
     assistant_logger = AssistantResponseLogger()
 
@@ -99,6 +158,59 @@ async def test_dialogue_pipeline_wiring() -> None:
     messages = context.get_messages()
     assert any("ഹലോ" in str(m.get("content", "")) for m in messages)
     assert any(CANNED_REPLY in str(m.get("content", "")) for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_dialogue_pipeline_tool_call_round_trip() -> None:
+    llm = GroqLLMService(
+        api_key="test-key",
+        settings=GroqLLMService.Settings(
+            model="llama-3.3-70b-versatile",
+            system_instruction=BOOKING_SYSTEM_PROMPT,
+        ),
+    )
+    llm._client.chat.completions.create = AsyncMock(  # type: ignore[attr-defined]
+        side_effect=[_mock_tool_call_chunks(), _mock_stream_chunks()]
+    )
+
+    context = LLMContext(tools=BOOKING_TOOLS)
+    context_aggregator = LLMContextAggregatorPair(context)
+    assistant_logger = AssistantResponseLogger()
+
+    pipeline = Pipeline(
+        [
+            context_aggregator.user(),
+            llm,
+            assistant_logger,
+            context_aggregator.assistant(),
+        ]
+    )
+
+    await run_test(
+        pipeline,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="നാളെ രാവിലെ 10 മണിക്ക് ഒരു ഹെയർകട്ട് വേണം",
+                user_id="test-user",
+                timestamp=time_now_iso8601(),
+                language=Language.ML_IN,
+            ),
+            LLMRunFrame(),
+            SleepFrame(sleep=0.5),
+        ],
+    )
+
+    # The stub check_availability handler always reports available and echoes
+    # back the parsed arguments — confirms the schema's handler actually ran
+    # and the LLM service auto-continued into a second completion afterward.
+    messages = context.get_messages()
+    tool_messages = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    assert '"available": true' in str(tool_messages[0].get("content", "")).lower()
+    assert "ഹെയർകട്ട്" in str(tool_messages[0].get("content", ""))
+
+    # The second (post-tool-result) completion round produced the final reply.
+    assert assistant_logger.last_response == CANNED_REPLY
 
 
 @pytest.mark.asyncio

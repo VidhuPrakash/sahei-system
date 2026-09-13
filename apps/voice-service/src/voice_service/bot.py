@@ -40,7 +40,8 @@ from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
 
-from voice_service.prompts import BOOKING_SYSTEM_PROMPT
+from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT
+from voice_service.tools import BOOKING_TOOLS
 
 load_dotenv(override=True)
 
@@ -184,6 +185,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             system_instruction=BOOKING_SYSTEM_PROMPT,
         ),
     )
+    llm.append_system_instruction(ORG_CONTEXT)
     tts = SarvamTTSService(
         api_key=os.environ["SARVAM_API_KEY"],
         sample_rate=8000,
@@ -191,7 +193,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             model="bulbul:v3", voice="roopa", language=Language.ML_IN
         ),
     )
-    context = LLMContext()
+    context = LLMContext(tools=BOOKING_TOOLS)
     context_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),

@@ -12,8 +12,10 @@ from pipecat.tests.utils import SleepFrame, run_test
 from pipecat.transcriptions.language import Language
 from pipecat.utils.time import time_now_iso8601
 
+from voice_service import tools
 from voice_service.bot import AssistantResponseLogger
-from voice_service.prompts import BOOKING_SYSTEM_PROMPT
+from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT
+from voice_service.tools import BOOKING_TOOLS
 
 MALAYALAM_SCRIPT = re.compile(r"[ഀ-ൿ]")
 
@@ -29,8 +31,16 @@ pytestmark = pytest.mark.skipif(
 
 
 async def _run_turn(
-    pipeline: Pipeline, assistant_logger: AssistantResponseLogger, text: str
+    pipeline: Pipeline,
+    assistant_logger: AssistantResponseLogger,
+    text: str,
+    *,
+    sleep: float = 5.0,
 ) -> str:
+    """`sleep` should be increased for turns expected to trigger a tool call —
+    those need a second Groq completion round-trip after the tool result lands,
+    on top of the first one that detects the tool call, so 5s (fine for a
+    plain conversational turn) isn't consistently enough."""
     await run_test(
         pipeline,
         frames_to_send=[
@@ -41,7 +51,7 @@ async def _run_turn(
                 language=Language.ML_IN,
             ),
             LLMRunFrame(),
-            SleepFrame(sleep=5.0),
+            SleepFrame(sleep=sleep),
         ],
     )
     # context_aggregator.assistant() consumes LLMTextFrame/LLMFullResponse*Frame
@@ -60,7 +70,8 @@ def _make_pipeline() -> tuple[Pipeline, AssistantResponseLogger]:
             system_instruction=BOOKING_SYSTEM_PROMPT,
         ),
     )
-    context = LLMContext()
+    llm.append_system_instruction(ORG_CONTEXT)
+    context = LLMContext(tools=BOOKING_TOOLS)
     context_aggregator = LLMContextAggregatorPair(context)
     assistant_logger = AssistantResponseLogger()
     pipeline = Pipeline(
@@ -95,3 +106,67 @@ async def test_fallback_on_unclear_input() -> None:
     reply = await _run_turn(pipeline, assistant_logger, "ഇന്ന് മഴ പെയ്യുമോ?")
     assert MALAYALAM_SCRIPT.search(reply)
     assert reply.strip() != ""
+
+
+@pytest.mark.asyncio
+async def test_off_flow_question_answered_from_org_context() -> None:
+    """Mid-conversation business questions should get answered, not stall the flow."""
+    pipeline, assistant_logger = _make_pipeline()
+
+    await _run_turn(pipeline, assistant_logger, "ഹലോ")
+
+    # log_inquiry may fire alongside the spoken answer here, adding a second
+    # completion round-trip — same reasoning as the tool-call test above.
+    parking_reply = await _run_turn(
+        pipeline, assistant_logger, "നിങ്ങളുടെ അടുത്ത് പാർക്കിംഗ് ഉണ്ടോ?", sleep=15.0
+    )
+    assert MALAYALAM_SCRIPT.search(parking_reply)
+    assert parking_reply.strip() != ""
+
+    hours_reply = await _run_turn(
+        pipeline, assistant_logger, "നിങ്ങളുടെ പ്രവർത്തന സമയം എന്താണ്?", sleep=15.0
+    )
+    assert MALAYALAM_SCRIPT.search(hours_reply)
+    assert hours_reply.strip() != ""
+
+
+@pytest.mark.asyncio
+async def test_tools_fire_during_happy_path_booking() -> None:
+    """Confirms check_availability and book_appointment actually get called
+    (not just that the reply looks plausible) against the live model."""
+    calls: dict[str, int] = {"check_availability": 0, "book_appointment": 0}
+    real_check = tools._STUB_HANDLERS["check_availability"]
+    real_book = tools._STUB_HANDLERS["book_appointment"]
+
+    async def _wrapped_check(params: object) -> None:
+        calls["check_availability"] += 1
+        await real_check(params)
+
+    async def _wrapped_book(params: object) -> None:
+        calls["book_appointment"] += 1
+        await real_book(params)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        tools._CHECK_AVAILABILITY_SCHEMA, "_handler", _wrapped_check, raising=False
+    )
+    monkeypatch.setattr(tools._BOOK_APPOINTMENT_SCHEMA, "_handler", _wrapped_book, raising=False)
+    try:
+        pipeline, assistant_logger = _make_pipeline()
+
+        await _run_turn(pipeline, assistant_logger, "ഹലോ")
+        await _run_turn(pipeline, assistant_logger, "എനിക്ക് ഒരു ഹെയർകട്ട് വേണം")
+        # check_availability fires here — needs time for the tool round-trip
+        # plus the follow-up completion, not just the initial one.
+        confirmation = await _run_turn(
+            pipeline, assistant_logger, "നാളെ രാവിലെ പത്ത് മണിക്ക്", sleep=15.0
+        )
+        # book_appointment fires here — same reasoning.
+        final = await _run_turn(pipeline, assistant_logger, "അതെ, ശരിയാണ്", sleep=15.0)
+
+        assert MALAYALAM_SCRIPT.search(confirmation)
+        assert MALAYALAM_SCRIPT.search(final)
+        assert calls["check_availability"] >= 1
+        assert calls["book_appointment"] >= 1
+    finally:
+        monkeypatch.undo()
