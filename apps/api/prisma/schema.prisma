@@ -85,6 +85,7 @@ model Organization {
   invitations Invitation[]
 
   businessProfile BusinessProfile?
+  phoneNumbers    OrgPhoneNumber[]
 
   @@unique([slug])
   @@map("organization")
@@ -119,6 +120,25 @@ model Invitation {
   @@index([organizationId])
   @@index([email])
   @@map("invitation")
+}
+
+/// An org's own inbound phone number(s) — the number callers dial that
+/// voice-service resolves to a business_profiles row. Not yet consumed by
+/// voice-service (still hardcoded via BUSINESS_ID env var, see
+/// apps/voice-service/src/voice_service/call_context.py) — this table exists
+/// so a future multi-tenant voice-service session has org-to-number
+/// resolution to read from.
+model OrgPhoneNumber {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  /// E.164 format, e.g. +919999999999.
+  phoneNumber String   @unique @map("phone_number")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("org_phone_numbers")
 }
 
 /// One row per organization's business. orgId is the tenant boundary —
