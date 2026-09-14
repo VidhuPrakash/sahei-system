@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from voice_service.session_store import CallSessionStore
+
 
 @dataclass
 class CallContext:
@@ -19,3 +21,5 @@ class CallContext:
     business_id: str
     customer_phone: str
     http_client: httpx.AsyncClient
+    session_store: CallSessionStore
+    call_sid: str

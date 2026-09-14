@@ -15,9 +15,17 @@
   the same way as `ORG_CONTEXT`. The check_availability/book_appointment tools
   require an ISO date, and the caller only ever gives a relative one ("നാളെ" /
   tomorrow) — the model needs to know "today" to resolve that itself.
+- `known_caller_context()`: appended only when `session_store.CallSessionStore`
+  finds an existing session for the call's SID at startup (see `bot.run_bot`) —
+  i.e. this call_sid was seen before. Tells the model which fields are already
+  known so it doesn't re-ask them. See `session_store.py`'s module docstring
+  for the caveat that the real-world trigger for this (an Exotel WebSocket
+  reconnect reusing the same call_sid) is unverified.
 """
 
 from datetime import datetime
+
+from voice_service.session_store import CallSession
 
 BOOKING_SYSTEM_PROMPT = """\
 നിങ്ങൾ ഒരു അപ്പോയിന്റ്മെന്റ് ബുക്കിംഗ് അസിസ്റ്റന്റ് ആണ്. ഫോണിൽ വിളിക്കുന്ന \
@@ -83,3 +91,27 @@ def current_date_context(today: datetime) -> str:
     a relative date the caller says ("നാളെ" / tomorrow) into the ISO date the
     check_availability/book_appointment tools require."""
     return f'ഇന്നത്തെ തീയതി {today.strftime("%Y-%m-%d")} ആണ്.'
+
+
+def known_caller_context(session: CallSession) -> str | None:
+    """Malayalam system instruction for a call whose call_sid already had a
+    session in Redis at startup — tells the model which structured booking
+    fields the caller already gave so it doesn't re-ask them. Returns None
+    when nothing is known yet, so a fresh call gets no extra instruction."""
+    labels: list[tuple[str, str | None]] = [
+        ("സേവനം", session.service),
+        ("തീയതി", session.date),
+        ("സമയം", session.time),
+        ("പേര്", session.customer_name),
+        ("സ്ഥലം", session.customer_area),
+    ]
+    known = [f"{label}: {value}" for label, value in labels if value]
+    if not known:
+        return None
+    details = ", ".join(known)
+    return (
+        f"ഈ കോൾ നേരത്തെ തുടങ്ങിയതാണ് (കണക്ഷൻ വിച്ഛേദിച്ചത് മൂലം പുനരാരംഭിച്ചത്), "
+        f"ഉപഭോക്താവ് ഇനിപ്പറയുന്ന വിവരങ്ങൾ ഇതിനകം പറഞ്ഞു കഴിഞ്ഞു: {details}. "
+        "ഇവ ഒരിക്കൽ കൂടി ചോദിക്കരുത് — ബാക്കിയുള്ള വിവരങ്ങൾ മാത്രം ചോദിച്ച് "
+        "സംഭാഷണം തുടരുക."
+    )

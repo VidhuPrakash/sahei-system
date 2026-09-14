@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -42,9 +43,16 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
+from redis.asyncio import Redis
 
 from voice_service.call_context import CallContext
-from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT, current_date_context
+from voice_service.prompts import (
+    BOOKING_SYSTEM_PROMPT,
+    ORG_CONTEXT,
+    current_date_context,
+    known_caller_context,
+)
+from voice_service.session_store import CallSession, CallSessionStore
 from voice_service.tools import BOOKING_TOOLS
 
 load_dotenv(override=True)
@@ -183,6 +191,30 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     """Wire Sarvam STT -> Groq dialogue LLM -> Sarvam TTS -> spoken reply."""
     logger.info("Starting dialogue bot")
 
+    call_data = runner_args.call_data
+    customer_phone = (call_data.from_number if call_data else None) or "unknown"
+    call_sid = (call_data.call_id if call_data else None) or f"unknown-{uuid.uuid4()}"
+    if call_data is None or call_data.call_id is None:
+        logger.warning(
+            "No call_sid from Exotel handshake; session rehydration is disabled "
+            "for this call (generated id={})",
+            call_sid,
+        )
+
+    business_id = os.environ["BUSINESS_ID"]
+    session_store = CallSessionStore(Redis.from_url(os.environ["REDIS_URL"], decode_responses=True))
+    existing_session = await session_store.get(call_sid)
+    session = existing_session or CallSession(
+        call_sid=call_sid, business_id=business_id, customer_phone=customer_phone
+    )
+    if existing_session is None:
+        await session_store.upsert(
+            call_sid,
+            business_id=business_id,
+            customer_phone=customer_phone,
+            created_at=datetime.now(BUSINESS_TIMEZONE).isoformat(),
+        )
+
     stt = SarvamSTTService(
         api_key=os.environ["SARVAM_API_KEY"],
         settings=SarvamSTTService.Settings(model="saaras:v4", language=Language.ML_IN),
@@ -196,6 +228,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
     llm.append_system_instruction(ORG_CONTEXT)
     llm.append_system_instruction(current_date_context(datetime.now(BUSINESS_TIMEZONE)))
+    rehydration_context = known_caller_context(session)
+    if rehydration_context is not None:
+        logger.info("Rehydrated session for call_sid={}: known fields present", call_sid)
+        llm.append_system_instruction(rehydration_context)
     tts = SarvamTTSService(
         api_key=os.environ["SARVAM_API_KEY"],
         sample_rate=8000,
@@ -228,16 +264,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         ]
     )
 
-    call_data = runner_args.call_data
-    customer_phone = (call_data.from_number if call_data else None) or "unknown"
     call_context = CallContext(
-        business_id=os.environ["BUSINESS_ID"],
+        business_id=business_id,
         customer_phone=customer_phone,
         http_client=httpx.AsyncClient(
             base_url=os.environ["BOOKING_API_URL"],
             headers={"x-api-key": os.environ["BOOKING_API_KEY"]},
             timeout=10.0,
         ),
+        session_store=session_store,
+        call_sid=call_sid,
     )
 
     worker = PipelineWorker(
@@ -270,6 +306,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         await runner.run()
     finally:
         await call_context.http_client.aclose()
+        # Single reliable cleanup point: on_client_disconnected's runner.cancel()
+        # unblocks runner.run() into this same finally, and idle-timeout
+        # cancellation also always lands here — so this covers every way the
+        # call ends. Idempotent if book_appointment already deleted the session.
+        await session_store.delete(call_sid)
+        await session_store.aclose()
 
 
 async def bot(runner_args: RunnerArguments) -> None:
