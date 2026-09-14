@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from voice_service.session_store import CallSessionStore
+
 
 @dataclass
 class CallContext:
@@ -19,3 +21,9 @@ class CallContext:
     business_id: str
     customer_phone: str
     http_client: httpx.AsyncClient
+    session_store: CallSessionStore
+    call_sid: str
+    # Set by tools.py's handlers on a successful booking/inquiry; read at call
+    # end (bot.run_bot's finally block) to derive the call's outcome.
+    booking_reference: str | None = None
+    inquiry_logged: bool = False

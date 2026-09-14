@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fakeredis import FakeAsyncRedis
 from pipecat.frames.frames import LLMRunFrame, TranscriptionFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -19,6 +20,7 @@ from voice_service import tools
 from voice_service.bot import AssistantResponseLogger
 from voice_service.call_context import CallContext
 from voice_service.prompts import BOOKING_SYSTEM_PROMPT, ORG_CONTEXT
+from voice_service.session_store import CallSessionStore
 from voice_service.tools import BOOKING_TOOLS
 
 MALAYALAM_SCRIPT = re.compile(r"[ഀ-ൿ]")
@@ -59,6 +61,8 @@ async def _wire_tool_handlers_to_fake_backend(
         http_client=httpx.AsyncClient(
             base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_booking_api)
         ),
+        session_store=CallSessionStore(FakeAsyncRedis(decode_responses=True)),
+        call_sid="test-call-sid",
     )
 
     def _inject(handler: Any) -> Any:

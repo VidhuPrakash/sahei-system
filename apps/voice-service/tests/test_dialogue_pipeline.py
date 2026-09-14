@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from fakeredis import FakeAsyncRedis
 from pipecat.frames.frames import LLMRunFrame, MetricsFrame, TranscriptionFrame, TTSStartedFrame
 from pipecat.metrics.metrics import LLMTokenUsage, LLMUsageMetricsData, TTFBMetricsData
 from pipecat.pipeline.pipeline import Pipeline
@@ -25,6 +26,7 @@ from voice_service.bot import (
 )
 from voice_service.call_context import CallContext
 from voice_service.prompts import BOOKING_SYSTEM_PROMPT
+from voice_service.session_store import CallSessionStore
 from voice_service.tools import BOOKING_TOOLS
 
 CANNED_REPLY = "എന്ത് സഹായമാണ് വേണ്ടത്?"
@@ -175,6 +177,8 @@ async def test_dialogue_pipeline_tool_call_round_trip(monkeypatch: pytest.Monkey
         http_client=httpx.AsyncClient(
             base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_booking_api)
         ),
+        session_store=CallSessionStore(FakeAsyncRedis(decode_responses=True)),
+        call_sid="test-call-sid",
     )
     real_check = tools._HANDLERS["check_availability"]
 
