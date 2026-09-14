@@ -20,6 +20,8 @@ LLM instead of raising — a backend hiccup should end the tool call, not crash
 the call's audio pipeline.
 """
 
+from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -99,6 +101,8 @@ async def _handle_book_appointment(params: FunctionCallParams) -> None:
         )
         response.raise_for_status()
         result = response.json()
+        if result.get("status") == "confirmed":
+            ctx.booking_reference = result.get("bookingReference")
         # Booking is the terminal state of the scripted flow (see
         # prompts.BOOKING_SYSTEM_PROMPT) — nothing left to resume, so clear
         # the session's PII now rather than waiting for call end.
@@ -120,10 +124,43 @@ async def _handle_log_inquiry(params: FunctionCallParams) -> None:
         response = await ctx.http_client.post("/booking/log-inquiry", json=payload)
         response.raise_for_status()
         result = response.json()
+        ctx.inquiry_logged = True
     except httpx.HTTPError as exc:
         logger.error("log_inquiry request failed: {}", exc)
         result = {"logged": False}
     await params.result_callback(result)
+
+
+async def post_call_transcript(
+    ctx: CallContext,
+    transcript: Sequence[Any],
+    started_at: datetime,
+    ended_at: datetime,
+) -> None:
+    """POSTs the full call transcript + outcome to apps/api. Called from
+    bot.run_bot's finally block at call end — never raises, since call-end
+    cleanup must complete even if this backend round-trip fails."""
+    if ctx.booking_reference:
+        outcome = "BOOKED"
+    elif ctx.inquiry_logged:
+        outcome = "INQUIRY"
+    else:
+        outcome = "NO_OUTCOME"
+    payload = {
+        "businessId": ctx.business_id,
+        "callId": ctx.call_sid,
+        "customerPhone": ctx.customer_phone,
+        "outcome": outcome,
+        "bookingReference": ctx.booking_reference,
+        "transcript": transcript,
+        "startedAt": started_at.isoformat(),
+        "endedAt": ended_at.isoformat(),
+    }
+    try:
+        response = await ctx.http_client.post("/call-transcripts", json=payload)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.error("post_call_transcript request failed: {}", exc)
 
 
 _CHECK_AVAILABILITY_SCHEMA = FunctionSchema(
@@ -211,7 +248,7 @@ BOOKING_TOOLS: ToolsSchema = ToolsSchema(
     ]
 )
 
-__all__: list[str] = ["BOOKING_TOOLS"]
+__all__: list[str] = ["BOOKING_TOOLS", "post_call_transcript"]
 
 # Re-exported for tests that want to wrap/monkeypatch the real handler logic.
 _HANDLERS: dict[str, Any] = {

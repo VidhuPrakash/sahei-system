@@ -140,11 +140,12 @@ model BusinessProfile {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  organization  Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  services      Service[]
-  businessHours BusinessHours[]
-  appointments  Appointment[]
-  inquiries     Inquiry[]
+  organization    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  services        Service[]
+  businessHours   BusinessHours[]
+  appointments    Appointment[]
+  inquiries       Inquiry[]
+  callTranscripts CallTranscript[]
 
   @@map("business_profiles")
 }
@@ -240,4 +241,33 @@ model Inquiry {
 
   @@index([businessId])
   @@map("inquiries")
+}
+
+enum CallOutcome {
+  BOOKED
+  INQUIRY
+  NO_OUTCOME
+
+  @@map("call_outcome")
+}
+
+/// Written by voice-service when a call ends: the full LLM conversation plus
+/// how it resolved. callId is Exotel's call sid — unique so a retried POST
+/// (e.g. voice-service crash-retry) upserts instead of erroring.
+model CallTranscript {
+  id               String      @id @default(cuid())
+  businessId       String      @map("business_id")
+  callId           String      @unique @map("call_id")
+  customerPhone    String      @map("customer_phone")
+  outcome          CallOutcome
+  bookingReference String?     @map("booking_reference")
+  transcript       Json
+  startedAt        DateTime    @map("started_at")
+  endedAt          DateTime    @map("ended_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+
+  business BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@map("call_transcripts")
 }

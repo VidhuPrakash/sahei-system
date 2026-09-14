@@ -7,6 +7,7 @@ import { ServicesModule } from './modules/services/services.module.js';
 import { BusinessHoursModule } from './modules/business-hours/business-hours.module.js';
 import { AppointmentsModule } from './modules/appointments/appointments.module.js';
 import { BookingModule } from './modules/booking/booking.module.js';
+import { CallTranscriptsModule } from './modules/call-transcripts/call-transcripts.module.js';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { BookingModule } from './modules/booking/booking.module.js';
     BusinessHoursModule,
     AppointmentsModule,
     BookingModule,
+    CallTranscriptsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

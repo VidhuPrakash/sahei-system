@@ -53,7 +53,7 @@ from voice_service.prompts import (
     known_caller_context,
 )
 from voice_service.session_store import CallSession, CallSessionStore
-from voice_service.tools import BOOKING_TOOLS
+from voice_service.tools import BOOKING_TOOLS, post_call_transcript
 
 load_dotenv(override=True)
 
@@ -236,7 +236,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         api_key=os.environ["SARVAM_API_KEY"],
         sample_rate=8000,
         settings=SarvamTTSService.Settings(
-            model="bulbul:v3", voice="roopa", language=Language.ML_IN
+            model="bulbul:v3", voice="mani", pace=0.95, language=Language.ML_IN
         ),
     )
     context = LLMContext(tools=BOOKING_TOOLS)
@@ -275,6 +275,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         session_store=session_store,
         call_sid=call_sid,
     )
+    started_at = datetime.now(BUSINESS_TIMEZONE)
 
     worker = PipelineWorker(
         pipeline,
@@ -305,11 +306,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     try:
         await runner.run()
     finally:
-        await call_context.http_client.aclose()
         # Single reliable cleanup point: on_client_disconnected's runner.cancel()
         # unblocks runner.run() into this same finally, and idle-timeout
         # cancellation also always lands here — so this covers every way the
         # call ends. Idempotent if book_appointment already deleted the session.
+        await post_call_transcript(
+            call_context, context.messages, started_at, datetime.now(BUSINESS_TIMEZONE)
+        )
+        await call_context.http_client.aclose()
         await session_store.delete(call_sid)
         await session_store.aclose()
 
