@@ -8,6 +8,8 @@ import { BusinessHoursModule } from './modules/business-hours/business-hours.mod
 import { AppointmentsModule } from './modules/appointments/appointments.module.js';
 import { BookingModule } from './modules/booking/booking.module.js';
 import { CallTranscriptsModule } from './modules/call-transcripts/call-transcripts.module.js';
+import { ExotelModule } from './modules/exotel/exotel.module.js';
+import { PhoneNumbersModule } from './modules/phone-numbers/phone-numbers.module.js';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { CallTranscriptsModule } from './modules/call-transcripts/call-transcrip
     AppointmentsModule,
     BookingModule,
     CallTranscriptsModule,
+    ExotelModule,
+    PhoneNumbersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

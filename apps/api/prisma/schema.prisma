@@ -122,6 +122,29 @@ model Invitation {
   @@map("invitation")
 }
 
+enum PhoneNumberSource {
+  NEW
+  FORWARDED
+
+  @@map("phone_number_source")
+}
+
+enum PhoneNumberProvisioningStatus {
+  PENDING
+  PURCHASED
+  FAILED
+
+  @@map("phone_number_provisioning_status")
+}
+
+enum PhoneNumberRoutingStatus {
+  PENDING
+  AUTO_CONFIGURED
+  MANUAL_SETUP_REQUIRED
+
+  @@map("phone_number_routing_status")
+}
+
 /// An org's own inbound phone number(s) — the number callers dial that
 /// voice-service resolves to a business_profiles row. Not yet consumed by
 /// voice-service (still hardcoded via BUSINESS_ID env var, see
@@ -131,9 +154,38 @@ model Invitation {
 model OrgPhoneNumber {
   id          String   @id @default(cuid())
   orgId       String   @map("org_id")
-  /// E.164 format, e.g. +919999999999.
-  phoneNumber String   @unique @map("phone_number")
-  createdAt   DateTime @default(now()) @map("created_at")
+  /// E.164 format, e.g. +919999999999. Null until Exotel purchase succeeds.
+  phoneNumber String?  @unique @map("phone_number")
+
+  source PhoneNumberSource @default(NEW) @map("source")
+  /// Org's own pre-existing number — set only when source = FORWARDED. The
+  /// number callers currently dial; org forwards it (carrier-level) onto
+  /// `phoneNumber` once purchased.
+  forwardingFromNumber String? @map("forwarding_from_number")
+
+  provisioningStatus PhoneNumberProvisioningStatus @default(PENDING) @map("provisioning_status")
+  /// Exotel's Sid for the purchased ExoPhone (distinct from the E.164
+  /// string) — needed for later Exotel API calls (Flow/App attach, release).
+  exotelPhoneSid String? @unique @map("exotel_phone_sid")
+
+  routingStatus PhoneNumberRoutingStatus @default(PENDING) @map("routing_status")
+  /// Id of the Exotel App/Flow created to point the number at voice-service's
+  /// WS URL. Null when routing was never attempted or fell back to manual.
+  exotelFlowSid String? @map("exotel_flow_sid")
+
+  /// Set the first time the org clicks "verify" — the lower bound used to
+  /// look up a matching CallTranscript row on subsequent verify calls.
+  verificationRequestedAt DateTime? @map("verification_requested_at")
+  /// Set once a CallTranscript created at/after verificationRequestedAt is
+  /// found, confirming the test call reached voice-service end-to-end.
+  forwardingVerifiedAt DateTime? @map("forwarding_verified_at")
+
+  /// Human-readable detail on the most recent provisioning/routing failure,
+  /// surfaced in the dashboard. Cleared on the next successful step.
+  lastError String? @db.Text @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
