@@ -6,18 +6,18 @@ import { cn } from "../lib/utils";
 
 const SectionNav = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(
   ({ className, ...props }, ref) => (
-    <nav ref={ref} className={cn("flex flex-col gap-1 border-r border-border pr-2", className)} {...props} />
+    <nav ref={ref} className={cn("flex flex-col gap-1 pr-2", className)} {...props} />
   )
 );
 SectionNav.displayName = "SectionNav";
 
 const sectionNavItemVariants = cva(
-  "relative flex items-center gap-2 border-l-2 px-3 py-2 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
+  "relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-shell-muted-foreground outline-none transition-colors hover:bg-shell-accent hover:text-shell-foreground focus-visible:ring-2 focus-visible:ring-ring",
   {
     variants: {
       active: {
-        true: "border-ring bg-accent text-foreground",
-        false: "border-transparent",
+        true: "bg-shell-accent font-semibold text-shell-foreground",
+        false: "",
       },
     },
     defaultVariants: {

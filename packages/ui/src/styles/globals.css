@@ -9,52 +9,49 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* "The Daybook Ledger" — restrained: navy ink + off-white paper, blue reserved for the single live/active role (see --ring) */
-  --radius: 0.25rem;
-  --background: oklch(0.972 0.007 145.5);
-  --foreground: oklch(0.188 0.066 261.5);
-  --card: oklch(0.972 0.007 145.5);
-  --card-foreground: oklch(0.188 0.066 261.5);
-  --popover: oklch(0.972 0.007 145.5);
-  --popover-foreground: oklch(0.188 0.066 261.5);
-  --primary: oklch(0.188 0.066 261.5);
-  --primary-foreground: oklch(0.972 0.007 145.5);
-  --secondary: oklch(0.94 0.012 261.5);
-  --secondary-foreground: oklch(0.188 0.066 261.5);
-  --muted: oklch(0.94 0.012 261.5);
-  --muted-foreground: oklch(0.48 0.03 261.5);
-  /* neutral hover/highlight wash — NOT the brand blue accent, keep this navy-neutral */
-  --accent: oklch(0.94 0.012 261.5);
-  --accent-foreground: oklch(0.188 0.066 261.5);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.972 0.007 145.5);
-  /* ruled-row direction needs a visibly present rule, not a soft-SaaS hairline — measured 3.65:1 against paper (WCAG non-text 3:1 target) */
-  --border: oklch(0.6 0.03 261.5);
-  --input: oklch(0.6 0.03 261.5);
-  /* brand blue — reserved for the single "live/active" role only */
-  --ring: oklch(0.537 0.232 262.7);
-}
+  /* Direction (Session 15, replacing "The Daybook Ledger"): Navy Ink is a real dominant
+     dark field on the shell (nav/topbar/auth), not a rationed accent. Wire Blue is the
+     primary interactive color throughout, not a single-role sliver. See .impeccable/surfaces/client.md
+     for the full direction contract. */
+  --radius: 0.75rem;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  /* content canvas (tables, cards, scan-heavy areas) — light */
+  --background: #f3f7f3;
+  --foreground: #031130;
+  --card: #ffffff;
+  --card-foreground: #031130;
+  --popover: #ffffff;
+  --popover-foreground: #031130;
+  --secondary: #edf1fb;
+  --secondary-foreground: #031130;
+  --muted: #edf1fb;
+  --muted-foreground: #5b6472;
+  --accent: #e7ebf3;
+  --accent-foreground: #031130;
+  --border: #d8deea;
+  --input: #c7d0e0;
+
+  /* wire blue — promoted from single-role accent to primary interactive color */
+  --primary: #185df1;
+  --primary-foreground: #ffffff;
+  --ring: #185df1;
+  --primary-hover: #144fcd;
+
+  --destructive: #e11d48;
+  --destructive-foreground: #ffffff;
+
+  /* status accents — named roles for call/booking outcomes (wired in as real content lands) */
+  --status-success: #16a34a;
+  --status-warning: #f97316;
+  --status-danger: #e11d48;
+
+  /* dark shell — nav, topbar, auth screens */
+  --shell-background: #031130;
+  --shell-foreground: #f3f7f3;
+  --shell-muted-foreground: #a9b8d9;
+  --shell-surface: #0b1b3d;
+  --shell-border: #253a66;
+  --shell-accent: #14264c;
 }
 
 @theme inline {
@@ -71,6 +68,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -82,6 +80,17 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-danger: var(--status-danger);
+
+  --color-shell-background: var(--shell-background);
+  --color-shell-foreground: var(--shell-foreground);
+  --color-shell-muted-foreground: var(--shell-muted-foreground);
+  --color-shell-surface: var(--shell-surface);
+  --color-shell-border: var(--shell-border);
+  --color-shell-accent: var(--shell-accent);
 }
 
 @layer base {

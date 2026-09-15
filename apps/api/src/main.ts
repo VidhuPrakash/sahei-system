@@ -9,6 +9,8 @@ async function bootstrap() {
     bodyParser: false,
   });
 
+  app.enableCors({ origin: process.env.CLIENT_URL, credentials: true });
+
   configureAuth(app);
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

@@ -15,7 +15,8 @@
     "react-dom": "19.2.8",
     "@sahei/ui": "workspace:*",
     "@sahei/types": "workspace:*",
-    "better-auth": "^1.2.0"
+    "better-auth": "^1.2.0",
+    "lucide-react": "^0.468.0"
   },
   "devDependencies": {
     "@sahei/config": "workspace:*",

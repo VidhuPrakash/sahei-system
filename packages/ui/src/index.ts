@@ -4,3 +4,7 @@ export * from "./components/card";
 export * from "./components/table";
 export * from "./components/dialog";
 export * from "./components/section-nav";
+export * from "./components/label";
+export * from "./components/input";
+export * from "./components/mobile-nav";
+export * from "./components/dropdown-menu";

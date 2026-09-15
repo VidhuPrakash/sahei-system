@@ -152,7 +152,7 @@ enum PhoneNumberRoutingStatus {
 /// so a future multi-tenant voice-service session has org-to-number
 /// resolution to read from.
 model OrgPhoneNumber {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid())
   orgId       String   @map("org_id")
   /// E.164 format, e.g. +919999999999. Null until Exotel purchase succeeds.
   phoneNumber String?  @unique @map("phone_number")
@@ -198,7 +198,7 @@ model OrgPhoneNumber {
 /// inherit tenancy transitively through this relation, so they never need
 /// their own orgId column.
 model BusinessProfile {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid())
   /// FK to better-auth's organization table. Unique: one business per org
   /// for this pilot model.
   orgId       String   @unique @map("org_id")
@@ -223,7 +223,7 @@ model BusinessProfile {
 }
 
 model Service {
-  id              String   @id @default(cuid())
+  id              String   @id @default(uuid())
   businessId      String   @map("business_id")
   name            String
   /// Local-language name (e.g. Malayalam) — callers name services in the
@@ -247,7 +247,7 @@ model Service {
 /// through JS Date and is a timezone footgun. Plain ints are trivial to
 /// validate/compare.
 model BusinessHours {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid())
   businessId String   @map("business_id")
   dayOfWeek  Int      @map("day_of_week")
   openTime   Int      @map("open_time_minutes")
@@ -271,7 +271,7 @@ enum AppointmentStatus {
 }
 
 model Appointment {
-  id               String            @id @default(cuid())
+  id               String            @id @default(uuid())
   businessId       String            @map("business_id")
   serviceId        String            @map("service_id")
   customerName     String            @map("customer_name")
@@ -303,7 +303,7 @@ enum InquiryCategory {
 /// an off-topic remark, or a call that wasn't about booking at all. Written
 /// by voice-service's log_inquiry tool; not part of the booking flow itself.
 model Inquiry {
-  id         String          @id @default(cuid())
+  id         String          @id @default(uuid())
   businessId String          @map("business_id")
   category   InquiryCategory
   summary    String          @db.Text
@@ -327,7 +327,7 @@ enum CallOutcome {
 /// how it resolved. callId is Exotel's call sid — unique so a retried POST
 /// (e.g. voice-service crash-retry) upserts instead of erroring.
 model CallTranscript {
-  id               String      @id @default(cuid())
+  id               String      @id @default(uuid())
   businessId       String      @map("business_id")
   callId           String      @unique @map("call_id")
   customerPhone    String      @map("customer_phone")
