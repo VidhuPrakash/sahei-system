@@ -1,29 +1,38 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Consumers (apps/client) import this file across a workspace boundary — Tailwind v4's
+   automatic content scan doesn't reach into another package's source by default, so this
+   package's own component source must be registered explicitly. */
+@source "../**/*.{ts,tsx}";
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  /* "The Daybook Ledger" — restrained: navy ink + off-white paper, blue reserved for the single live/active role (see --ring) */
+  --radius: 0.25rem;
+  --background: oklch(0.972 0.007 145.5);
+  --foreground: oklch(0.188 0.066 261.5);
+  --card: oklch(0.972 0.007 145.5);
+  --card-foreground: oklch(0.188 0.066 261.5);
+  --popover: oklch(0.972 0.007 145.5);
+  --popover-foreground: oklch(0.188 0.066 261.5);
+  --primary: oklch(0.188 0.066 261.5);
+  --primary-foreground: oklch(0.972 0.007 145.5);
+  --secondary: oklch(0.94 0.012 261.5);
+  --secondary-foreground: oklch(0.188 0.066 261.5);
+  --muted: oklch(0.94 0.012 261.5);
+  --muted-foreground: oklch(0.48 0.03 261.5);
+  /* neutral hover/highlight wash — NOT the brand blue accent, keep this navy-neutral */
+  --accent: oklch(0.94 0.012 261.5);
+  --accent-foreground: oklch(0.188 0.066 261.5);
   --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --destructive-foreground: oklch(0.972 0.007 145.5);
+  /* ruled-row direction needs a visibly present rule, not a soft-SaaS hairline — measured 3.65:1 against paper (WCAG non-text 3:1 target) */
+  --border: oklch(0.6 0.03 261.5);
+  --input: oklch(0.6 0.03 261.5);
+  /* brand blue — reserved for the single "live/active" role only */
+  --ring: oklch(0.537 0.232 262.7);
 }
 
 .dark {
