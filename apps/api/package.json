@@ -27,6 +27,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
+    "create-test-account": "tsx scripts/create-test-account.ts",
     "auth:generate": "better-auth generate --config src/auth/auth.config.ts -y"
   },
   "prisma": {

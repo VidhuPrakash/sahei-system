@@ -13,7 +13,7 @@ See [claude.md](./claude.md) for full architecture, tech stack, and session conv
 ## Setup
 
 ```bash
-# JS/TS workspaces (apps/frontend, apps/api, packages/*)
+# JS/TS workspaces (apps/client, apps/api, packages/*)
 pnpm install
 
 # Python voice pipeline (separate toolchain)
@@ -30,7 +30,7 @@ cp .env.example .env   # fill in real values, never commit this file
 | App                | Command                                  |
 | ------------------ | ----------------------------------------- |
 | Everything (JS/TS) | `pnpm dev`                                 |
-| Dashboard only      | `pnpm --filter frontend dev`               |
+| Dashboard only      | `pnpm --filter client dev`               |
 | API only            | `pnpm --filter api dev`                    |
 | Voice service       | `cd apps/voice-service && uv run voice-service` |
 
@@ -38,7 +38,7 @@ cp .env.example .env   # fill in real values, never commit this file
 
 ## Docker
 
-Runs the whole stack — Postgres, Redis, `api`, `frontend`, `voice-service` — via `docker-compose.yml`. The two Node apps build via `turbo prune` for lean images; `voice-service` builds via `uv`.
+Runs the whole stack — Postgres, Redis, `api`, `client`, `voice-service` — via `docker-compose.yml`. The two Node apps build via `turbo prune` for lean images; `voice-service` builds via `uv`.
 
 ```bash
 cp .env.example .env   # fill in real values first
@@ -47,7 +47,7 @@ docker compose up --build
 
 | Service       | Port |
 | ------------- | ---- |
-| frontend      | 3000 |
+| client        | 3000 |
 | api           | 3001 (container listens on 3000) |
 | postgres      | 5432 |
 | redis         | 6379 |
@@ -86,7 +86,7 @@ pnpm commit
 
 ```
 /apps
-  /frontend         Next.js — org dashboard (login, transcripts, calendar, analytics)
+  /client           Next.js — org dashboard (login, transcripts, calendar, analytics)
   /api              NestJS — multi-tenant data, booking logic, org auth (better-auth)
   /voice-service    Python/Pipecat — Exotel <-> Sarvam STT/TTS <-> Claude call pipeline
                     (own venv via uv, not part of turbo build/dev)
