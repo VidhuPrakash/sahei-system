@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { EmptyState } from "@/components/empty-state";
+import { CallsView } from "./calls-view";
 
 export const metadata: Metadata = { title: "Calls & Transcripts" };
 
 export default function CallsPage() {
-  return <EmptyState description="Calls your AI phone agent handles will show up here." />;
+  return <CallsView />;
 }

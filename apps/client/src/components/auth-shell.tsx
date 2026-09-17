@@ -1,6 +1,8 @@
+import { cn } from "@sahei/ui";
+
 import { NetworkWaveformMotif } from "./network-waveform-motif";
 
-export function AuthShell({ children }: { children: React.ReactNode }) {
+export function AuthShell({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <div className="grid min-h-screen md:grid-cols-2">
       <div className="relative hidden flex-col justify-between overflow-hidden bg-shell-background p-12 text-shell-foreground md:flex">
@@ -15,7 +17,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <span className="mb-8 text-2xl font-semibold tracking-tight text-foreground md:hidden">
           SaHei
         </span>
-        <div className="w-full max-w-sm">{children}</div>
+        <div className={cn("w-full max-w-sm", className)}>{children}</div>
       </div>
     </div>
   );
