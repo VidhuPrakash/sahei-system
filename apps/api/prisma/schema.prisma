@@ -81,6 +81,7 @@ model Organization {
   logo        String?
   createdAt   DateTime
   metadata    String?
+  planTier    PlanTier?    @map("plan_tier")
   members     Member[]
   invitations Invitation[]
 
@@ -89,6 +90,14 @@ model Organization {
 
   @@unique([slug])
   @@map("organization")
+}
+
+enum PlanTier {
+  STARTER
+  GROWTH
+  PRO
+
+  @@map("plan_tier")
 }
 
 model Member {

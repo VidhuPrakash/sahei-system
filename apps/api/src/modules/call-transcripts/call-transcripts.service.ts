@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { CallTranscript } from '@prisma/client';
+import type { CallOutcome, CallTranscript } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import type { CreateCallTranscriptDto } from './dto/create-call-transcript.dto.js';
@@ -14,7 +14,10 @@ export class CallTranscriptsService {
       callId: dto.callId,
       customerPhone: dto.customerPhone,
       outcome: dto.outcome,
-      bookingReference: dto.bookingReference,
+      // A booking reference only means something for a call that actually
+      // booked — null it out rather than trust the caller not to send one
+      // alongside INQUIRY/NO_OUTCOME.
+      bookingReference: dto.outcome === 'BOOKED' ? dto.bookingReference : null,
       transcript: dto.transcript as unknown as Prisma.InputJsonValue,
       startedAt: new Date(dto.startedAt),
       endedAt: new Date(dto.endedAt),
@@ -37,5 +40,23 @@ export class CallTranscriptsService {
       throw new NotFoundException(`No call transcript with callId ${callId}`);
     }
     return transcript;
+  }
+
+  findByOrgId(orgId: string, filters: { outcome?: CallOutcome; q?: string } = {}): Promise<CallTranscript[]> {
+    return this.prisma.callTranscript.findMany({
+      where: {
+        business: { orgId },
+        ...(filters.outcome ? { outcome: filters.outcome } : {}),
+        ...(filters.q
+          ? {
+              OR: [
+                { customerPhone: { contains: filters.q, mode: 'insensitive' } },
+                { callId: { contains: filters.q, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { startedAt: 'desc' },
+    });
   }
 }

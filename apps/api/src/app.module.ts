@@ -10,6 +10,7 @@ import { BookingModule } from './modules/booking/booking.module.js';
 import { CallTranscriptsModule } from './modules/call-transcripts/call-transcripts.module.js';
 import { ExotelModule } from './modules/exotel/exotel.module.js';
 import { PhoneNumbersModule } from './modules/phone-numbers/phone-numbers.module.js';
+import { OrganizationModule } from './modules/organizations/organization.module.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PhoneNumbersModule } from './modules/phone-numbers/phone-numbers.module
     CallTranscriptsModule,
     ExotelModule,
     PhoneNumbersModule,
+    OrganizationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

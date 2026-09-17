@@ -7,6 +7,7 @@ function makePrismaMock() {
     callTranscript: {
       upsert: vi.fn(),
       findUnique: vi.fn(),
+      findMany: vi.fn(),
     },
   };
 }
@@ -51,6 +52,18 @@ describe('CallTranscriptsService', () => {
         }),
       });
     });
+
+    it('nulls out bookingReference for an outcome other than BOOKED', async () => {
+      const inquiryDto = { ...dto, outcome: 'INQUIRY' as const, bookingReference: 'SHOULD-BE-DROPPED' };
+      prisma.callTranscript.upsert.mockResolvedValue({ id: 'ct-1', ...inquiryDto, bookingReference: null });
+      await callTranscripts.create(inquiryDto);
+
+      expect(prisma.callTranscript.upsert).toHaveBeenCalledWith({
+        where: { callId: 'call-1' },
+        create: expect.objectContaining({ outcome: 'INQUIRY', bookingReference: null }),
+        update: expect.objectContaining({ outcome: 'INQUIRY', bookingReference: null }),
+      });
+    });
   });
 
   describe('findByCallId', () => {
@@ -67,6 +80,44 @@ describe('CallTranscriptsService', () => {
       await expect(callTranscripts.findByCallId('call-1')).resolves.toEqual(
         record,
       );
+    });
+  });
+
+  describe('findByOrgId', () => {
+    it('scopes the query to the org via the business relation, newest first', async () => {
+      prisma.callTranscript.findMany.mockResolvedValue([]);
+      await callTranscripts.findByOrgId('org-1');
+
+      expect(prisma.callTranscript.findMany).toHaveBeenCalledWith({
+        where: { business: { orgId: 'org-1' } },
+        orderBy: { startedAt: 'desc' },
+      });
+    });
+
+    it('applies an outcome filter when provided', async () => {
+      prisma.callTranscript.findMany.mockResolvedValue([]);
+      await callTranscripts.findByOrgId('org-1', { outcome: 'BOOKED' });
+
+      expect(prisma.callTranscript.findMany).toHaveBeenCalledWith({
+        where: { business: { orgId: 'org-1' }, outcome: 'BOOKED' },
+        orderBy: { startedAt: 'desc' },
+      });
+    });
+
+    it('applies a free-text filter against customerPhone and callId when provided', async () => {
+      prisma.callTranscript.findMany.mockResolvedValue([]);
+      await callTranscripts.findByOrgId('org-1', { q: '999' });
+
+      expect(prisma.callTranscript.findMany).toHaveBeenCalledWith({
+        where: {
+          business: { orgId: 'org-1' },
+          OR: [
+            { customerPhone: { contains: '999', mode: 'insensitive' } },
+            { callId: { contains: '999', mode: 'insensitive' } },
+          ],
+        },
+        orderBy: { startedAt: 'desc' },
+      });
     });
   });
 });
