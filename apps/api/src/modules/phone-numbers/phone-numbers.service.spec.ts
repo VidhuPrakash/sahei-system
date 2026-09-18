@@ -1,5 +1,5 @@
-import { BadGatewayException, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { PhoneNumberProvisioningStatus, PhoneNumberRoutingStatus, PhoneNumberSource } from '@prisma/client';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { PhoneNumberProvisioningStatus, PhoneNumberRoutingStatus, PhoneNumberSource, PhoneNumberType } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhoneNumbersService } from './phone-numbers.service.js';
 
@@ -10,6 +10,8 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
     phoneNumber: null,
     source: PhoneNumberSource.NEW,
     forwardingFromNumber: null,
+    numberType: null,
+    monthlyPriceInr: null,
     provisioningStatus: PhoneNumberProvisioningStatus.PENDING,
     exotelPhoneSid: null,
     routingStatus: PhoneNumberRoutingStatus.PENDING,
@@ -23,12 +25,19 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function makePricingRow(numberType: PhoneNumberType, monthlyPriceInr: number) {
+  return { numberType, monthlyPriceInr, updatedAt: new Date('2026-09-01T00:00:00Z') };
+}
+
 function makePrismaMock() {
   return {
     orgPhoneNumber: {
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn(),
       update: vi.fn(),
+    },
+    phoneNumberPricing: {
+      findUniqueOrThrow: vi.fn().mockResolvedValue(makePricingRow(PhoneNumberType.MOBILE, 999)),
     },
     callTranscript: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -38,13 +47,17 @@ function makePrismaMock() {
 
 describe('PhoneNumbersService', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
-  let exotel: { purchaseNumber: ReturnType<typeof vi.fn>; attachVoicebotApplet: ReturnType<typeof vi.fn> };
+  let exotel: {
+    purchaseNumber: ReturnType<typeof vi.fn>;
+    attachVoicebotApplet: ReturnType<typeof vi.fn>;
+    listAvailableNumbers: ReturnType<typeof vi.fn>;
+  };
   let businessProfiles: { findByOrgId: ReturnType<typeof vi.fn> };
   let phoneNumbers: PhoneNumbersService;
 
   beforeEach(() => {
     prisma = makePrismaMock();
-    exotel = { purchaseNumber: vi.fn(), attachVoicebotApplet: vi.fn() };
+    exotel = { purchaseNumber: vi.fn(), attachVoicebotApplet: vi.fn(), listAvailableNumbers: vi.fn() };
     businessProfiles = { findByOrgId: vi.fn().mockResolvedValue({ id: 'business-1', orgId: 'org-1' }) };
     phoneNumbers = new PhoneNumbersService(prisma as never, exotel as never, businessProfiles as never);
     vi.stubEnv('VOICE_SERVICE_WS_URL', 'wss://voice.sahei.app/ws');
@@ -55,7 +68,7 @@ describe('PhoneNumbersService', () => {
   });
 
   describe('provision', () => {
-    const dto = { source: PhoneNumberSource.NEW } as never;
+    const dto = { source: PhoneNumberSource.NEW, numberType: PhoneNumberType.MOBILE } as never;
 
     it('throws ConflictException when the org already has a purchased number', async () => {
       prisma.orgPhoneNumber.findFirst.mockResolvedValue(
@@ -64,30 +77,45 @@ describe('PhoneNumbersService', () => {
       await expect(phoneNumbers.provision('org-1', dto)).rejects.toThrow(ConflictException);
     });
 
-    it('throws ConflictException when a recent PENDING attempt is already running', async () => {
+    it('throws ConflictException when a request is already awaiting approval', async () => {
       prisma.orgPhoneNumber.findFirst.mockResolvedValue(
-        makeRow({ provisioningStatus: PhoneNumberProvisioningStatus.PENDING, updatedAt: new Date() }),
+        makeRow({ provisioningStatus: PhoneNumberProvisioningStatus.AWAITING_APPROVAL }),
       );
       await expect(phoneNumbers.provision('org-1', dto)).rejects.toThrow(ConflictException);
     });
 
-    it('reuses a stale PENDING row instead of creating a new one', async () => {
-      const staleRow = makeRow({
-        provisioningStatus: PhoneNumberProvisioningStatus.PENDING,
-        updatedAt: new Date('2020-01-01T00:00:00Z'),
-      });
-      prisma.orgPhoneNumber.findFirst.mockResolvedValue(staleRow);
-      prisma.orgPhoneNumber.update.mockResolvedValueOnce(staleRow).mockResolvedValueOnce(
+    it('creates an AWAITING_APPROVAL row priced from the pricing table, not the client', async () => {
+      prisma.phoneNumberPricing.findUniqueOrThrow.mockResolvedValue(makePricingRow(PhoneNumberType.MOBILE, 999));
+      prisma.orgPhoneNumber.create.mockResolvedValue(
         makeRow({
-          phoneNumber: '+911234567890',
-          exotelPhoneSid: 'exotel-sid-1',
-          provisioningStatus: PhoneNumberProvisioningStatus.PURCHASED,
-          routingStatus: PhoneNumberRoutingStatus.AUTO_CONFIGURED,
-          exotelFlowSid: 'flow-1',
+          numberType: PhoneNumberType.MOBILE,
+          monthlyPriceInr: 999,
+          provisioningStatus: PhoneNumberProvisioningStatus.AWAITING_APPROVAL,
         }),
       );
-      exotel.purchaseNumber.mockResolvedValue({ phoneNumber: '+911234567890', exotelSid: 'exotel-sid-1' });
-      exotel.attachVoicebotApplet.mockResolvedValue({ status: 'auto_configured', exotelFlowSid: 'flow-1' });
+
+      const result = await phoneNumbers.provision('org-1', dto);
+
+      expect(prisma.phoneNumberPricing.findUniqueOrThrow).toHaveBeenCalledWith({
+        where: { numberType: PhoneNumberType.MOBILE },
+      });
+      expect(prisma.orgPhoneNumber.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          orgId: 'org-1',
+          numberType: PhoneNumberType.MOBILE,
+          monthlyPriceInr: 999,
+          provisioningStatus: PhoneNumberProvisioningStatus.AWAITING_APPROVAL,
+        }),
+      });
+      expect(result.provisioningStatus).toBe(PhoneNumberProvisioningStatus.AWAITING_APPROVAL);
+    });
+
+    it('reuses an existing row when resubmitting after FAILED', async () => {
+      const failedRow = makeRow({ provisioningStatus: PhoneNumberProvisioningStatus.FAILED, lastError: 'boom' });
+      prisma.orgPhoneNumber.findFirst.mockResolvedValue(failedRow);
+      prisma.orgPhoneNumber.update.mockResolvedValue(
+        makeRow({ provisioningStatus: PhoneNumberProvisioningStatus.AWAITING_APPROVAL }),
+      );
 
       await phoneNumbers.provision('org-1', dto);
 
@@ -95,84 +123,6 @@ describe('PhoneNumbersService', () => {
       expect(prisma.orgPhoneNumber.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'phone-1' } }),
       );
-    });
-
-    it('reuses a FAILED row for a retry', async () => {
-      const failedRow = makeRow({ provisioningStatus: PhoneNumberProvisioningStatus.FAILED, lastError: 'boom' });
-      prisma.orgPhoneNumber.findFirst.mockResolvedValue(failedRow);
-      prisma.orgPhoneNumber.update.mockResolvedValueOnce(failedRow).mockResolvedValueOnce(
-        makeRow({
-          phoneNumber: '+911234567890',
-          exotelPhoneSid: 'exotel-sid-1',
-          provisioningStatus: PhoneNumberProvisioningStatus.PURCHASED,
-          routingStatus: PhoneNumberRoutingStatus.AUTO_CONFIGURED,
-          exotelFlowSid: 'flow-1',
-        }),
-      );
-      exotel.purchaseNumber.mockResolvedValue({ phoneNumber: '+911234567890', exotelSid: 'exotel-sid-1' });
-      exotel.attachVoicebotApplet.mockResolvedValue({ status: 'auto_configured', exotelFlowSid: 'flow-1' });
-
-      await phoneNumbers.provision('org-1', dto);
-
-      expect(prisma.orgPhoneNumber.create).not.toHaveBeenCalled();
-    });
-
-    it('marks the row FAILED and rethrows BadGatewayException when Exotel purchase fails', async () => {
-      prisma.orgPhoneNumber.create.mockResolvedValue(makeRow());
-      exotel.purchaseNumber.mockRejectedValue(new Error('Exotel is not configured'));
-
-      await expect(phoneNumbers.provision('org-1', dto)).rejects.toThrow(BadGatewayException);
-      expect(prisma.orgPhoneNumber.update).toHaveBeenCalledWith({
-        where: { id: 'phone-1' },
-        data: { provisioningStatus: PhoneNumberProvisioningStatus.FAILED, lastError: 'Exotel is not configured' },
-      });
-    });
-
-    it('resolves PURCHASED/AUTO_CONFIGURED when purchase and routing both succeed', async () => {
-      prisma.orgPhoneNumber.create.mockResolvedValue(makeRow());
-      exotel.purchaseNumber.mockResolvedValue({ phoneNumber: '+911234567890', exotelSid: 'exotel-sid-1' });
-      exotel.attachVoicebotApplet.mockResolvedValue({ status: 'auto_configured', exotelFlowSid: 'flow-1' });
-      prisma.orgPhoneNumber.update.mockResolvedValue(
-        makeRow({
-          phoneNumber: '+911234567890',
-          exotelPhoneSid: 'exotel-sid-1',
-          provisioningStatus: PhoneNumberProvisioningStatus.PURCHASED,
-          routingStatus: PhoneNumberRoutingStatus.AUTO_CONFIGURED,
-          exotelFlowSid: 'flow-1',
-        }),
-      );
-
-      const result = await phoneNumbers.provision('org-1', dto);
-
-      expect(result.provisioningStatus).toBe(PhoneNumberProvisioningStatus.PURCHASED);
-      expect(result.routingStatus).toBe(PhoneNumberRoutingStatus.AUTO_CONFIGURED);
-    });
-
-    it('resolves (does not throw) PURCHASED/MANUAL_SETUP_REQUIRED when routing falls back to manual', async () => {
-      prisma.orgPhoneNumber.create.mockResolvedValue(makeRow());
-      exotel.purchaseNumber.mockResolvedValue({ phoneNumber: '+911234567890', exotelSid: 'exotel-sid-1' });
-      exotel.attachVoicebotApplet.mockResolvedValue({
-        status: 'manual_setup_required',
-        reason: 'EXOTEL_VOICEBOT_FLOW_ID is not configured',
-      });
-      prisma.orgPhoneNumber.update.mockResolvedValue(
-        makeRow({
-          phoneNumber: '+911234567890',
-          exotelPhoneSid: 'exotel-sid-1',
-          provisioningStatus: PhoneNumberProvisioningStatus.PURCHASED,
-          routingStatus: PhoneNumberRoutingStatus.MANUAL_SETUP_REQUIRED,
-          lastError: 'EXOTEL_VOICEBOT_FLOW_ID is not configured',
-        }),
-      );
-
-      const result = await phoneNumbers.provision('org-1', dto);
-
-      expect(result.provisioningStatus).toBe(PhoneNumberProvisioningStatus.PURCHASED);
-      expect(result.routingStatus).toBe(PhoneNumberRoutingStatus.MANUAL_SETUP_REQUIRED);
-      expect(result.manualRoutingSetup).toEqual({
-        wsUrl: 'wss://voice.sahei.app/ws',
-        instructions: expect.any(String),
-      });
     });
   });
 

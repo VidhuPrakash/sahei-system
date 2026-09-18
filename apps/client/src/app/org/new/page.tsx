@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Building2, Headset, Phone, Smartphone, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import { Button, Input, Label, RadioCard, Stepper, Textarea } from "@sahei/ui";
-import { PLAN_TIERS, type OnboardingStatus, type PlanTier } from "@sahei/types";
+import { PHONE_NUMBER_TYPES, PLAN_TIERS, type OnboardingStatus, type PhoneNumberPricing, type PhoneNumberType, type PlanTier } from "@sahei/types";
 
 import { authClient } from "@/lib/auth-client";
 import { apiClient, ApiError } from "@/lib/api-client";
@@ -13,18 +14,45 @@ const STEPS = ["Business details", "Plan", "Phone number"];
 
 const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const PLAN_COPY: Record<PlanTier, { label: string; description: string }> = {
+const PLAN_COPY: Record<PlanTier, { label: string; description: string; icon: LucideIcon }> = {
   STARTER: {
     label: "Starter",
     description: "One phone number and core call handling and booking — for a single location finding its footing.",
+    icon: Zap,
   },
   GROWTH: {
     label: "Growth",
     description: "Higher call volume with full analytics and priority support — for a business scaling up bookings.",
+    icon: TrendingUp,
   },
   PRO: {
     label: "Pro",
     description: "Multiple locations and staff, with the most headroom for call volume — for an established business.",
+    icon: Building2,
+  },
+};
+
+const PLAN_PRICING: Record<PlanTier, number> = {
+  STARTER: 1499,
+  GROWTH: 2999,
+  PRO: 5999,
+};
+
+const LINE_TYPE_COPY: Record<PhoneNumberType, { label: string; description: string; icon: LucideIcon }> = {
+  MOBILE: {
+    label: "Mobile",
+    description: "A standard 10-digit mobile number.",
+    icon: Smartphone,
+  },
+  LANDLINE: {
+    label: "Landline",
+    description: "A local landline number tied to your business's city code.",
+    icon: Phone,
+  },
+  TOLLFREE: {
+    label: "Toll-free",
+    description: "A 1800 number callers can dial for free.",
+    icon: Headset,
   },
 };
 
@@ -65,6 +93,7 @@ export default function NewOrganizationPage() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [hasOrganization, setHasOrganization] = useState(false);
+  const [planTier, setPlanTier] = useState<PlanTier | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(true);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -76,6 +105,7 @@ export default function NewOrganizationPage() {
       .then((status) => {
         if (cancelled) return;
         setHasOrganization(true);
+        setPlanTier(status.plan.tier);
         if (status.complete) {
           router.replace("/dashboard");
           return;
@@ -136,8 +166,22 @@ export default function NewOrganizationPage() {
           }}
         />
       )}
-      {step === 2 && <PlanStep onComplete={() => setStep(3)} />}
-      {step === 3 && <PhoneNumberStep onComplete={() => router.push("/dashboard")} />}
+      {step === 2 && (
+        <PlanStep
+          onBack={() => setStep(1)}
+          onComplete={(tier) => {
+            setPlanTier(tier);
+            setStep(3);
+          }}
+        />
+      )}
+      {step === 3 && (
+        <PhoneNumberStep
+          planTier={planTier}
+          onBack={() => setStep(2)}
+          onComplete={() => router.push("/dashboard")}
+        />
+      )}
     </AuthShell>
   );
 }
@@ -274,14 +318,20 @@ function BusinessDetailsStep({
           {error}
         </p>
       )}
-      <Button type="submit" className="mt-2 w-full" disabled={isSubmitting}>
+      <Button type="submit" className="mt-2 h-11 w-full" disabled={isSubmitting}>
         {isSubmitting ? "Saving…" : "Continue"}
       </Button>
     </form>
   );
 }
 
-function PlanStep({ onComplete }: { onComplete: () => void }) {
+function PlanStep({
+  onBack,
+  onComplete,
+}: {
+  onBack: () => void;
+  onComplete: (tier: PlanTier) => void;
+}) {
   const [selected, setSelected] = useState<PlanTier | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -294,7 +344,7 @@ function PlanStep({ onComplete }: { onComplete: () => void }) {
 
     try {
       await apiClient.post("/organizations/me/plan", { planTier: selected });
-      onComplete();
+      onComplete(selected);
     } catch (err) {
       setError(errorMessage(err, "Could not save your plan selection."));
     } finally {
@@ -314,6 +364,9 @@ function PlanStep({ onComplete }: { onComplete: () => void }) {
             onChange={() => setSelected(tier)}
             label={PLAN_COPY[tier].label}
             description={PLAN_COPY[tier].description}
+            icon={PLAN_COPY[tier].icon}
+            price={`₹${PLAN_PRICING[tier]}/mo`}
+            recommended={tier === "GROWTH"}
           />
         ))}
       </div>
@@ -322,42 +375,73 @@ function PlanStep({ onComplete }: { onComplete: () => void }) {
           {error}
         </p>
       )}
-      <Button type="submit" className="mt-2 w-full" disabled={isSubmitting || !selected}>
-        {isSubmitting ? "Saving…" : "Continue"}
-      </Button>
+      <div className="mt-2 flex gap-3">
+        <Button type="button" variant="outline" className="h-11 flex-1" onClick={onBack} disabled={isSubmitting}>
+          Back
+        </Button>
+        <Button type="submit" className="h-11 flex-1" disabled={isSubmitting || !selected}>
+          {isSubmitting ? "Saving…" : "Continue"}
+        </Button>
+      </div>
     </form>
   );
 }
+
+const FORWARDING_NUMBER_PATTERN = /^\+[1-9]\d{6,14}$/;
 
 type PhoneSource = "NEW" | "FORWARDED";
 
 interface PhoneNumberStatus {
   phoneNumber: string | null;
   source: PhoneSource;
-  provisioningStatus: "PENDING" | "PURCHASED" | "FAILED";
+  numberType: PhoneNumberType | null;
+  monthlyPriceInr: number | null;
+  provisioningStatus: "PENDING" | "AWAITING_APPROVAL" | "PURCHASED" | "FAILED";
   routingStatus: "PENDING" | "AUTO_CONFIGURED" | "MANUAL_SETUP_REQUIRED";
   lastError: string | null;
   forwardingInstructions: string | null;
   manualRoutingSetup: { wsUrl: string; instructions: string } | null;
 }
 
-function PhoneNumberStep({ onComplete }: { onComplete: () => void }) {
+function priceFor(pricing: PhoneNumberPricing[] | null, numberType: PhoneNumberType): number | null {
+  return pricing?.find((row) => row.numberType === numberType)?.monthlyPriceInr ?? null;
+}
+
+type PhoneRequestStage = "form" | "paying" | "paid";
+
+function PhoneNumberStep({
+  planTier,
+  onBack,
+  onComplete,
+}: {
+  planTier: PlanTier | null;
+  onBack: () => void;
+  onComplete: () => void;
+}) {
+  const [stage, setStage] = useState<PhoneRequestStage>("form");
   const [source, setSource] = useState<PhoneSource>("NEW");
   const [forwardingFromNumber, setForwardingFromNumber] = useState("");
+  const [numberType, setNumberType] = useState<PhoneNumberType | null>(null);
+  const [pricing, setPricing] = useState<PhoneNumberPricing[] | null>(null);
   const [status, setStatus] = useState<PhoneNumberStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingExisting, setIsLoadingExisting] = useState(true);
+  const numberPrice = numberType ? priceFor(pricing, numberType) : null;
+  const planPrice = planTier ? PLAN_PRICING[planTier] : null;
+  const totalPayable = planPrice != null && numberPrice != null ? planPrice + numberPrice : null;
 
   useEffect(() => {
     let cancelled = false;
-    apiClient
-      .get<PhoneNumberStatus>("/phone-numbers/me")
-      .then((existing) => {
-        if (!cancelled) setStatus(existing);
-      })
-      .catch(() => {
-        // 404 — nothing provisioned yet, show the form.
+    Promise.allSettled([
+      apiClient.get<PhoneNumberStatus>("/phone-numbers/me"),
+      apiClient.get<PhoneNumberPricing[]>("/phone-numbers/pricing"),
+    ])
+      .then(([existingResult, pricingResult]) => {
+        if (cancelled) return;
+        // existingResult rejects with 404 when nothing's provisioned yet — show the form.
+        if (existingResult.status === "fulfilled") setStatus(existingResult.value);
+        if (pricingResult.status === "fulfilled") setPricing(pricingResult.value);
       })
       .finally(() => {
         if (!cancelled) setIsLoadingExisting(false);
@@ -367,8 +451,30 @@ function PhoneNumberStep({ onComplete }: { onComplete: () => void }) {
     };
   }, []);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function handleContinueFromForm(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!numberType) return;
+    setError(null);
+
+    if (source === "FORWARDED" && !FORWARDING_NUMBER_PATTERN.test(forwardingFromNumber)) {
+      setError(
+        "Enter your existing number in international format, starting with + and your country code (e.g. +919999999999)."
+      );
+      return;
+    }
+
+    setStage("paying");
+  }
+
+  function handlePay() {
+    setIsSubmitting(true);
+    setTimeout(() => {
+      setIsSubmitting(false);
+      setStage("paid");
+    }, 600);
+  }
+
+  async function handleConfirmRequest() {
     setError(null);
     setIsSubmitting(true);
 
@@ -376,10 +482,11 @@ function PhoneNumberStep({ onComplete }: { onComplete: () => void }) {
       const result = await apiClient.post<PhoneNumberStatus>("/phone-numbers/provision", {
         source,
         forwardingFromNumber: source === "FORWARDED" ? forwardingFromNumber : undefined,
+        numberType,
       });
       setStatus(result);
     } catch (err) {
-      setError(errorMessage(err, "Could not set up your phone number. Please try again."));
+      setError(errorMessage(err, "Could not send your request. Please try again."));
     } finally {
       setIsSubmitting(false);
     }
@@ -406,29 +513,121 @@ function PhoneNumberStep({ onComplete }: { onComplete: () => void }) {
             {status.manualRoutingSetup.instructions}
           </p>
         )}
-        <Button type="button" className="w-full" onClick={onComplete}>
+        <Button type="button" className="h-11 w-full" onClick={onComplete}>
           Go to dashboard
         </Button>
       </div>
     );
   }
 
+  if (status?.provisioningStatus === "AWAITING_APPROVAL") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-foreground">Request received</p>
+          <p className="text-sm text-muted-foreground">
+            We&apos;re setting up your {status.numberType ? LINE_TYPE_COPY[status.numberType].label : ""} number
+            {status.monthlyPriceInr != null && ` (₹${status.monthlyPriceInr}/month, billed monthly)`}. Our team will
+            activate it within 48 hours.
+          </p>
+        </div>
+        <Button type="button" className="h-11 w-full" onClick={onComplete}>
+          Go to dashboard
+        </Button>
+      </div>
+    );
+  }
+
+  if (stage === "paying") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-lg">
+          <p className="text-sm text-muted-foreground">
+            {source === "NEW" ? "New" : "Forwarded"} · {numberType ? LINE_TYPE_COPY[numberType].label : ""} number
+          </p>
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>{planTier ? PLAN_COPY[planTier].label : "—"} plan</span>
+            <span>{planPrice != null ? `₹${planPrice}/month` : "—"}</span>
+          </div>
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>{numberType ? LINE_TYPE_COPY[numberType].label : "—"} number</span>
+            <span>{numberPrice != null ? `₹${numberPrice}/month` : "—"}</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-border pt-2">
+            <span className="text-sm font-medium text-foreground">Total payable</span>
+            <span className="text-lg font-semibold text-foreground">
+              {totalPayable != null ? `₹${totalPayable}/month` : "—"}
+            </span>
+          </div>
+        </div>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        <div className="flex gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 flex-1"
+            onClick={() => setStage("form")}
+            disabled={isSubmitting}
+          >
+            Back
+          </Button>
+          <Button type="button" className="h-11 flex-1" onClick={handlePay} disabled={isSubmitting}>
+            {isSubmitting ? "Processing…" : `Pay ₹${totalPayable ?? "—"} now`}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === "paid") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-foreground">Payment successful</p>
+          <p className="text-sm text-muted-foreground">
+            You paid {totalPayable != null ? `₹${totalPayable}/month` : "—"} for your{" "}
+            {planTier ? PLAN_COPY[planTier].label : ""} plan and {numberType ? LINE_TYPE_COPY[numberType].label : ""}{" "}
+            number. Continue to send your request to our team.
+          </p>
+        </div>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        <Button type="button" className="h-11 w-full" onClick={handleConfirmRequest} disabled={isSubmitting}>
+          {isSubmitting ? "Sending…" : "Continue"}
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <form onSubmit={handleContinueFromForm} className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
         <RadioCard
           name="source"
           value="NEW"
           checked={source === "NEW"}
-          onChange={() => setSource("NEW")}
+          onChange={() => {
+            setSource("NEW");
+            setError(null);
+          }}
           label="Get a new number"
-          description="We'll purchase a number for your AI agent to answer on."
+          description="We'll set up a number for your AI agent to answer on."
         />
         <RadioCard
           name="source"
           value="FORWARDED"
           checked={source === "FORWARDED"}
-          onChange={() => setSource("FORWARDED")}
+          onChange={() => {
+            setSource("FORWARDED");
+            setError(null);
+          }}
           label="Forward my existing number"
           description="Keep your current number and forward calls to your new SaHei number."
         />
@@ -443,8 +642,32 @@ function PhoneNumberStep({ onComplete }: { onComplete: () => void }) {
             value={forwardingFromNumber}
             onChange={(event) => setForwardingFromNumber(event.target.value)}
           />
+          <p className="text-xs text-muted-foreground">
+            International format, starting with + and your country code — e.g. +919999999999.
+          </p>
         </div>
       )}
+      <div className="flex flex-col gap-1.5">
+        <Label>Select a number type</Label>
+        <div className="flex flex-col gap-3">
+          {PHONE_NUMBER_TYPES.map((type) => {
+            const price = priceFor(pricing, type);
+            return (
+              <RadioCard
+                key={type}
+                name="numberType"
+                value={type}
+                checked={numberType === type}
+                onChange={() => setNumberType(type)}
+                label={LINE_TYPE_COPY[type].label}
+                description={LINE_TYPE_COPY[type].description}
+                icon={LINE_TYPE_COPY[type].icon}
+                price={price != null ? `₹${price}/mo` : undefined}
+              />
+            );
+          })}
+        </div>
+      </div>
       {status?.provisioningStatus === "FAILED" && status.lastError && (
         <p role="alert" className="text-sm text-destructive">
           {status.lastError}
@@ -455,9 +678,14 @@ function PhoneNumberStep({ onComplete }: { onComplete: () => void }) {
           {error}
         </p>
       )}
-      <Button type="submit" className="mt-2 w-full" disabled={isSubmitting}>
-        {isSubmitting ? "Setting up your number…" : "Set up phone number"}
-      </Button>
+      <div className="mt-2 flex gap-3">
+        <Button type="button" variant="outline" className="h-11 flex-1" onClick={onBack} disabled={isSubmitting}>
+          Back
+        </Button>
+        <Button type="submit" className="h-11 flex-1" disabled={!numberType}>
+          Continue
+        </Button>
+      </div>
     </form>
   );
 }

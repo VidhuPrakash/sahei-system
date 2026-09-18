@@ -9,6 +9,11 @@ import { PhoneNumbersService } from './phone-numbers.service.js';
 export class PhoneNumbersController {
   constructor(private readonly phoneNumbers: PhoneNumbersService) {}
 
+  @Get('pricing')
+  listPricing() {
+    return this.phoneNumbers.listPricing();
+  }
+
   @Post('provision')
   provision(@CurrentOrg() orgId: string, @Body() dto: ProvisionPhoneNumberDto) {
     return this.phoneNumbers.provision(orgId, dto);

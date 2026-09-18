@@ -140,6 +140,10 @@ enum PhoneNumberSource {
 
 enum PhoneNumberProvisioningStatus {
   PENDING
+  /// Org submitted a line-type request; a SaHei staff member has not yet
+  /// purchased and assigned a real Exotel number. PENDING/FAILED are
+  /// reserved for that future admin-side fulfillment attempt itself.
+  AWAITING_APPROVAL
   PURCHASED
   FAILED
 
@@ -152,6 +156,25 @@ enum PhoneNumberRoutingStatus {
   MANUAL_SETUP_REQUIRED
 
   @@map("phone_number_routing_status")
+}
+
+enum PhoneNumberType {
+  MOBILE
+  LANDLINE
+  TOLLFREE
+
+  @@map("phone_number_type")
+}
+
+/// Monthly price per line type, shown to an org when it requests a number.
+/// Seeded with defaults at migration time; a future admin session edits
+/// these rows directly rather than needing new schema.
+model PhoneNumberPricing {
+  numberType      PhoneNumberType @id @map("number_type")
+  monthlyPriceInr Decimal         @db.Decimal(10, 2) @map("monthly_price_inr")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  @@map("phone_number_pricing")
 }
 
 /// An org's own inbound phone number(s) — the number callers dial that
@@ -171,6 +194,14 @@ model OrgPhoneNumber {
   /// number callers currently dial; org forwards it (carrier-level) onto
   /// `phoneNumber` once purchased.
   forwardingFromNumber String? @map("forwarding_from_number")
+
+  /// Which line type the org requested (Mobile/Landline/TollFree) — null
+  /// until a request is submitted.
+  numberType PhoneNumberType? @map("number_type")
+  /// PhoneNumberPricing's rate at the time the request was submitted, for
+  /// display only — not used for any billing logic here, Exotel bills the
+  /// account directly once a staff member fulfills the request.
+  monthlyPriceInr Decimal? @db.Decimal(10, 2) @map("monthly_price_inr")
 
   provisioningStatus PhoneNumberProvisioningStatus @default(PENDING) @map("provisioning_status")
   /// Exotel's Sid for the purchased ExoPhone (distinct from the E.164

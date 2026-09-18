@@ -1,19 +1,18 @@
-import { BadGatewayException, BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { OrgPhoneNumber } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import type { OrgPhoneNumber, PhoneNumberType } from '@prisma/client';
 import { PhoneNumberProvisioningStatus, PhoneNumberRoutingStatus, PhoneNumberSource } from '@prisma/client';
+import type { PhoneNumberPricing as PhoneNumberPricingType } from '@sahei/types';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessProfileService } from '../business-profile/business-profile.service.js';
 import type { ExotelRoutingResult } from '../exotel/exotel.service.js';
 import { ExotelService } from '../exotel/exotel.service.js';
 import type { ProvisionPhoneNumberDto } from './dto/provision-phone-number.dto.js';
 
-// A fresh row stuck in PENDING longer than this is treated as a crashed
-// attempt and reused, rather than blocking a retry indefinitely.
-const STALE_PENDING_MS = 2 * 60 * 1000;
-
 export interface PhoneNumberStatusResponse {
   phoneNumber: string | null;
   source: PhoneNumberSource;
+  numberType: PhoneNumberType | null;
+  monthlyPriceInr: number | null;
   provisioningStatus: PhoneNumberProvisioningStatus;
   routingStatus: PhoneNumberRoutingStatus;
   lastError: string | null;
@@ -55,59 +54,39 @@ export class PhoneNumbersService {
     private readonly businessProfiles: BusinessProfileService,
   ) {}
 
+  async listPricing(): Promise<PhoneNumberPricingType[]> {
+    const rows = await this.prisma.phoneNumberPricing.findMany();
+    return rows.map((row) => ({ numberType: row.numberType, monthlyPriceInr: Number(row.monthlyPriceInr) }));
+  }
+
   async provision(orgId: string, dto: ProvisionPhoneNumberDto): Promise<PhoneNumberStatusResponse> {
     const existing = await this.prisma.orgPhoneNumber.findFirst({ where: { orgId } });
 
     if (existing?.provisioningStatus === PhoneNumberProvisioningStatus.PURCHASED) {
       throw new ConflictException('This organization already has a phone number');
     }
-    if (
-      existing?.provisioningStatus === PhoneNumberProvisioningStatus.PENDING &&
-      Date.now() - existing.updatedAt.getTime() < STALE_PENDING_MS
-    ) {
-      throw new ConflictException('Phone number provisioning is already in progress');
+    if (existing?.provisioningStatus === PhoneNumberProvisioningStatus.AWAITING_APPROVAL) {
+      throw new ConflictException('Your phone number request is already awaiting approval');
     }
 
+    const pricing = await this.prisma.phoneNumberPricing.findUniqueOrThrow({
+      where: { numberType: dto.numberType },
+    });
+
+    const data = {
+      source: dto.source,
+      forwardingFromNumber: dto.forwardingFromNumber ?? null,
+      numberType: dto.numberType,
+      monthlyPriceInr: pricing.monthlyPriceInr,
+      provisioningStatus: PhoneNumberProvisioningStatus.AWAITING_APPROVAL,
+      lastError: null,
+    };
+
     const row = existing
-      ? await this.prisma.orgPhoneNumber.update({
-          where: { id: existing.id },
-          data: {
-            source: dto.source,
-            forwardingFromNumber: dto.forwardingFromNumber ?? null,
-            provisioningStatus: PhoneNumberProvisioningStatus.PENDING,
-            lastError: null,
-          },
-        })
-      : await this.prisma.orgPhoneNumber.create({
-          data: { orgId, source: dto.source, forwardingFromNumber: dto.forwardingFromNumber ?? null },
-        });
+      ? await this.prisma.orgPhoneNumber.update({ where: { id: existing.id }, data })
+      : await this.prisma.orgPhoneNumber.create({ data: { orgId, ...data } });
 
-    const purchased = await this.exotel.purchaseNumber().catch(async (error: Error) => {
-      await this.prisma.orgPhoneNumber.update({
-        where: { id: row.id },
-        data: { provisioningStatus: PhoneNumberProvisioningStatus.FAILED, lastError: error.message },
-      });
-      throw new BadGatewayException('Failed to purchase a phone number from Exotel');
-    });
-
-    const routing = await this.attemptRouting(purchased.exotelSid);
-
-    const updated = await this.prisma.orgPhoneNumber.update({
-      where: { id: row.id },
-      data: {
-        phoneNumber: purchased.phoneNumber,
-        exotelPhoneSid: purchased.exotelSid,
-        provisioningStatus: PhoneNumberProvisioningStatus.PURCHASED,
-        routingStatus:
-          routing.status === 'auto_configured'
-            ? PhoneNumberRoutingStatus.AUTO_CONFIGURED
-            : PhoneNumberRoutingStatus.MANUAL_SETUP_REQUIRED,
-        exotelFlowSid: routing.status === 'auto_configured' ? routing.exotelFlowSid : null,
-        lastError: routing.status === 'manual_setup_required' ? routing.reason : null,
-      },
-    });
-
-    return this.toStatusResponse(updated);
+    return this.toStatusResponse(row);
   }
 
   async getStatusForOrg(orgId: string): Promise<PhoneNumberStatusResponse> {
@@ -158,6 +137,10 @@ export class PhoneNumbersService {
     return { verified: true, verifiedAt: verified.forwardingVerifiedAt!.toISOString() };
   }
 
+  // Not called by provision() — this org-facing flow only records a request
+  // (see provision() above); a future admin session's fulfillment action
+  // will call exotel.purchaseNumber() then this method before marking the
+  // row PURCHASED.
   private async attemptRouting(exotelPhoneSid: string): Promise<ExotelRoutingResult> {
     const wsUrl = process.env.VOICE_SERVICE_WS_URL;
     if (!wsUrl) {
@@ -175,6 +158,8 @@ export class PhoneNumbersService {
     return {
       phoneNumber: row.phoneNumber,
       source: row.source,
+      numberType: row.numberType,
+      monthlyPriceInr: row.monthlyPriceInr ? Number(row.monthlyPriceInr) : null,
       provisioningStatus: row.provisioningStatus,
       routingStatus: row.routingStatus,
       lastError: row.lastError,

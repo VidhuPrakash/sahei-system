@@ -37,43 +37,70 @@ describe('ExotelService', () => {
   describe('purchaseNumber', () => {
     it('throws before calling fetch when Exotel is not configured', async () => {
       vi.stubEnv('EXOTEL_API_KEY', '');
-      await expect(exotel.purchaseNumber()).rejects.toThrow('Exotel is not configured');
+      await expect(exotel.purchaseNumber('+911234567890')).rejects.toThrow('Exotel is not configured');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('searches for an available number then purchases it', async () => {
-      fetchMock
-        .mockResolvedValueOnce(jsonResponse(200, { phone_numbers: [{ phone_number: '+911234567890' }] }))
-        .mockResolvedValueOnce(jsonResponse(200, { sid: 'exotel-sid-1', phone_number: '+911234567890' }));
+    it('purchases the given number directly', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { sid: 'exotel-sid-1', phone_number: '+911234567890' }));
 
-      const result = await exotel.purchaseNumber();
+      const result = await exotel.purchaseNumber('+911234567890');
 
       expect(result).toEqual({ phoneNumber: '+911234567890', exotelSid: 'exotel-sid-1' });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock.mock.calls[1]![0]).toContain('/IncomingPhoneNumbers');
-    });
-
-    it('throws ExotelApiError when no numbers are available', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, { phone_numbers: [] }));
-      await expect(exotel.purchaseNumber()).rejects.toThrow(ExotelApiError);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]![0]).toContain('/IncomingPhoneNumbers');
     });
 
     it('throws ExotelApiError when the purchase request fails', async () => {
-      fetchMock
-        .mockResolvedValueOnce(jsonResponse(200, { phone_numbers: [{ phone_number: '+911234567890' }] }))
-        .mockResolvedValueOnce(jsonResponse(422, { message: 'number no longer available' }));
-
-      await expect(exotel.purchaseNumber()).rejects.toThrow(ExotelApiError);
+      fetchMock.mockResolvedValueOnce(jsonResponse(422, { message: 'number no longer available' }));
+      await expect(exotel.purchaseNumber('+911234567890')).rejects.toThrow(ExotelApiError);
     });
 
     it('throws ExotelApiError on a network error', async () => {
       fetchMock.mockRejectedValueOnce(new Error('network down'));
-      await expect(exotel.purchaseNumber()).rejects.toThrow('network down');
+      await expect(exotel.purchaseNumber('+911234567890')).rejects.toThrow('network down');
     });
 
     it('throws ExotelApiError on a timeout', async () => {
       fetchMock.mockRejectedValueOnce(abortError());
-      await expect(exotel.purchaseNumber()).rejects.toThrow(/timed out/);
+      await expect(exotel.purchaseNumber('+911234567890')).rejects.toThrow(/timed out/);
+    });
+  });
+
+  describe('listAvailableNumbers', () => {
+    it('throws before calling fetch when Exotel is not configured', async () => {
+      vi.stubEnv('EXOTEL_API_KEY', '');
+      await expect(exotel.listAvailableNumbers('MOBILE')).rejects.toThrow('Exotel is not configured');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('calls the AvailablePhoneNumbers endpoint with country and mapped type segment', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, []));
+
+      await exotel.listAvailableNumbers('TOLLFREE');
+
+      expect(fetchMock.mock.calls[0]![0]).toContain('/AvailablePhoneNumbers/IN/TollFree');
+    });
+
+    it('maps every candidate, converting rental_price to a number', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, [
+          { phone_number: '+919606045083', region: 'KA', rental_price: '999.000000', number_type: 'Mobile' },
+          { phone_number: '+919148175380', region: 'KA', rental_price: '999.000000', number_type: 'Mobile' },
+        ]),
+      );
+
+      const result = await exotel.listAvailableNumbers('MOBILE');
+
+      expect(result).toEqual([
+        { phoneNumber: '+919606045083', numberType: 'MOBILE', monthlyPriceInr: 999, region: 'KA' },
+        { phoneNumber: '+919148175380', numberType: 'MOBILE', monthlyPriceInr: 999, region: 'KA' },
+      ]);
+    });
+
+    it('returns an empty array (does not throw) when Exotel has no candidates', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, []));
+      await expect(exotel.listAvailableNumbers('LANDLINE')).resolves.toEqual([]);
     });
   });
 
