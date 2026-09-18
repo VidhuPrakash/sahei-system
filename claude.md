@@ -45,6 +45,10 @@ Internal packages are scoped under `@sahei/*`. Root `package.json` name: `sahei`
 - Impeccable builds on and supersedes a plain frontend-design skill reference — don't run both for the same surface.
 - As voice-pipeline and booking-domain patterns solidify (Exotel/Sarvam integration conventions, appointment/business-hours logic), capture them as project skills under `.claude/skills/` and reference them here — don't let the same integration pattern get reinvented per session.
 
+## UI Conventions
+
+- Loading states use `Skeleton` from `@sahei/ui` (`packages/ui/src/components/skeleton.tsx`), shape-matched to the loaded content (table rows, cards, chart blocks) — never bare "Loading…" text.
+
 ## Session Conventions
 
 - One session = one integration or one feature, scoped to a single app or package. Don't take on multiple phases in one session.

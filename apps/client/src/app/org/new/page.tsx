@@ -3,16 +3,17 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Headset, Phone, Smartphone, TrendingUp, Zap, type LucideIcon } from "lucide-react";
-import { Button, Input, Label, RadioCard, Stepper, Textarea } from "@sahei/ui";
+import { Button, Input, Label, RadioCard, Skeleton, Stepper } from "@sahei/ui";
 import { PHONE_NUMBER_TYPES, PLAN_TIERS, type OnboardingStatus, type PhoneNumberPricing, type PhoneNumberType, type PlanTier } from "@sahei/types";
 
 import { authClient } from "@/lib/auth-client";
 import { apiClient, ApiError } from "@/lib/api-client";
 import { AuthShell } from "@/components/auth-shell";
+import { defaultBusinessHours } from "@/lib/business-hours";
+import { BusinessDetailsFields, type BusinessDetails } from "@/components/business-details-fields";
+import { AuthorityNumbersField, type AuthorityNumber } from "@/components/authority-numbers-field";
 
 const STEPS = ["Business details", "Plan", "Phone number"];
-
-const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 const PLAN_COPY: Record<PlanTier, { label: string; description: string; icon: LucideIcon }> = {
   STARTER: {
@@ -56,27 +57,6 @@ const LINE_TYPE_COPY: Record<PhoneNumberType, { label: string; description: stri
   },
 };
 
-interface BusinessHourRow {
-  dayOfWeek: number;
-  openTime: number;
-  closeTime: number;
-}
-
-function defaultBusinessHours(): BusinessHourRow[] {
-  return DAY_LABELS.map((_, dayOfWeek) => ({ dayOfWeek, openTime: 9 * 60, closeTime: 18 * 60 }));
-}
-
-function minutesToTime(minutes: number) {
-  const hours = Math.floor(minutes / 60).toString().padStart(2, "0");
-  const mins = (minutes % 60).toString().padStart(2, "0");
-  return `${hours}:${mins}`;
-}
-
-function timeToMinutes(value: string) {
-  const [hours, mins] = value.split(":").map(Number);
-  return hours * 60 + mins;
-}
-
 function slugify(name: string) {
   return name
     .trim()
@@ -87,6 +67,17 @@ function slugify(name: string) {
 
 function errorMessage(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+function OnboardingStepSkeleton() {
+  return (
+    <div className="flex flex-col gap-4">
+      <Skeleton className="h-5 w-40" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-32" />
+    </div>
+  );
 }
 
 export default function NewOrganizationPage() {
@@ -133,7 +124,7 @@ export default function NewOrganizationPage() {
   if (checkingStatus) {
     return (
       <AuthShell>
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <OnboardingStepSkeleton />
       </AuthShell>
     );
   }
@@ -193,20 +184,17 @@ function BusinessDetailsStep({
   hasOrganization: boolean;
   onComplete: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [nameLocal, setNameLocal] = useState("");
-  const [location, setLocation] = useState("");
-  const [description, setDescription] = useState("");
-  const [notes, setNotes] = useState("");
-  const [businessHours, setBusinessHours] = useState<BusinessHourRow[]>(defaultBusinessHours);
+  const [details, setDetails] = useState<BusinessDetails>({
+    name: "",
+    nameLocal: "",
+    location: "",
+    description: "",
+    notes: "",
+    businessHours: defaultBusinessHours(),
+  });
+  const [authorityNumbers, setAuthorityNumbers] = useState<AuthorityNumber[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  function updateHour(dayOfWeek: number, field: "openTime" | "closeTime", value: string) {
-    setBusinessHours((rows) =>
-      rows.map((row) => (row.dayOfWeek === dayOfWeek ? { ...row, [field]: timeToMinutes(value) } : row))
-    );
-  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -216,8 +204,8 @@ function BusinessDetailsStep({
     try {
       if (!hasOrganization) {
         const { data: organization, error: createError } = await authClient.organization.create({
-          name,
-          slug: slugify(name),
+          name: details.name,
+          slug: slugify(details.name),
         });
         if (createError || !organization) {
           setError(createError?.message ?? "Could not create your organization.");
@@ -227,7 +215,8 @@ function BusinessDetailsStep({
         await authClient.organization.setActive({ organizationId: organization.id });
       }
 
-      await apiClient.post("/business-profile", { name, nameLocal, location, description, notes, businessHours });
+      const authorityNumbersToSave = authorityNumbers.filter((row) => row.name.trim() || row.phoneNumber.trim());
+      await apiClient.post("/business-profile", { ...details, authorityNumbers: authorityNumbersToSave });
       onComplete();
     } catch (err) {
       setError(errorMessage(err, "Something went wrong saving your business details."));
@@ -238,81 +227,8 @@ function BusinessDetailsStep({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="org-name">Business name</Label>
-        <Input
-          id="org-name"
-          placeholder="e.g. Green Leaf Salon"
-          required
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="org-name-local">Business name (local language)</Label>
-        <Input
-          id="org-name-local"
-          placeholder="e.g. ഗ്രീൻ ലീഫ് സലൂൺ"
-          value={nameLocal}
-          onChange={(event) => setNameLocal(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="org-location">Location</Label>
-        <Input
-          id="org-location"
-          placeholder="e.g. MG Road, Kochi"
-          value={location}
-          onChange={(event) => setLocation(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="org-description">What does this business do?</Label>
-        <Textarea
-          id="org-description"
-          placeholder="A short description your AI agent can use to answer questions about the business."
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="org-notes">Notes for the agent</Label>
-        <Textarea
-          id="org-notes"
-          placeholder="Parking, walk-ins, payment methods — anything callers commonly ask about."
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label>Business hours</Label>
-        <div className="flex flex-col gap-3 rounded-md border border-input bg-background p-3">
-          {businessHours.map((row) => (
-            <div key={row.dayOfWeek} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-              <span className="text-sm font-medium text-foreground sm:w-24 sm:shrink-0">
-                {DAY_LABELS[row.dayOfWeek]}
-              </span>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="time"
-                  aria-label={`${DAY_LABELS[row.dayOfWeek]} opening time`}
-                  value={minutesToTime(row.openTime)}
-                  onChange={(event) => updateHour(row.dayOfWeek, "openTime", event.target.value)}
-                  className="min-w-0 flex-1 sm:w-28 sm:flex-none"
-                />
-                <span className="text-sm text-muted-foreground">to</span>
-                <Input
-                  type="time"
-                  aria-label={`${DAY_LABELS[row.dayOfWeek]} closing time`}
-                  value={minutesToTime(row.closeTime)}
-                  onChange={(event) => updateHour(row.dayOfWeek, "closeTime", event.target.value)}
-                  className="min-w-0 flex-1 sm:w-28 sm:flex-none"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <BusinessDetailsFields value={details} onChange={setDetails} />
+      <AuthorityNumbersField value={authorityNumbers} onChange={setAuthorityNumbers} />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -493,7 +409,7 @@ function PhoneNumberStep({
   }
 
   if (isLoadingExisting) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <OnboardingStepSkeleton />;
   }
 
   if (status?.provisioningStatus === "PURCHASED") {

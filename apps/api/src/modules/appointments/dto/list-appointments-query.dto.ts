@@ -1,6 +1,8 @@
 import { AppointmentStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+
+export type AppointmentScope = 'past' | 'today' | 'upcoming';
 
 export class ListAppointmentsQueryDto {
   @IsOptional()
@@ -10,6 +12,10 @@ export class ListAppointmentsQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @IsOptional()
+  @IsIn(['past', 'today', 'upcoming'])
+  scope?: AppointmentScope;
 
   @IsOptional()
   @Type(() => Number)

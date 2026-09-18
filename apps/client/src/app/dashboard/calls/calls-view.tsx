@@ -11,6 +11,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -96,7 +97,57 @@ export function CallsView() {
   }
 
   if (!transcripts) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return (
+      <>
+        <Card className="hidden sm:block">
+          <CardContent className="pt-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Outcome</TableHead>
+                  <TableHead>Booking reference</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <TableRow key={index} className="hover:bg-transparent">
+                    <TableCell>
+                      <Skeleton className="h-4 w-16" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-28" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-6 w-24 rounded-full" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-20" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-col gap-4 sm:hidden">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Card key={index}>
+              <CardContent className="flex flex-col gap-2 pt-6">
+                <div className="flex items-center justify-between gap-2">
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-3 w-12" />
+                </div>
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-3 w-36" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </>
+    );
   }
 
   if (transcripts.length === 0) {

@@ -18,6 +18,16 @@ export class BusinessHoursEntryDto {
   closeTime!: number;
 }
 
+export class AuthorityNumberEntryDto {
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phoneNumber!: string;
+}
+
 export class UpsertBusinessProfileDto {
   @IsString()
   @IsNotEmpty()
@@ -44,4 +54,10 @@ export class UpsertBusinessProfileDto {
   @ValidateNested({ each: true })
   @Type(() => BusinessHoursEntryDto)
   businessHours?: BusinessHoursEntryDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AuthorityNumberEntryDto)
+  authorityNumbers?: AuthorityNumberEntryDto[];
 }

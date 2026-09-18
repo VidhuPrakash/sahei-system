@@ -252,12 +252,13 @@ model BusinessProfile {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  organization    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  services        Service[]
-  businessHours   BusinessHours[]
-  appointments    Appointment[]
-  inquiries       Inquiry[]
-  callTranscripts CallTranscript[]
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  services         Service[]
+  businessHours    BusinessHours[]
+  authorityNumbers AuthorityNumber[]
+  appointments     Appointment[]
+  inquiries        Inquiry[]
+  callTranscripts  CallTranscript[]
 
   @@map("business_profiles")
 }
@@ -299,6 +300,23 @@ model BusinessHours {
 
   @@unique([businessId, dayOfWeek])
   @@map("business_hours")
+}
+
+/// Owners/managers who can call the support line to look up their own
+/// account data — a future feature; this table currently just stores the
+/// contacts, nothing calls out to it yet.
+model AuthorityNumber {
+  id          String   @id @default(uuid())
+  businessId  String   @map("business_id")
+  name        String
+  phoneNumber String   @map("phone_number")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@map("authority_numbers")
 }
 
 enum AppointmentStatus {

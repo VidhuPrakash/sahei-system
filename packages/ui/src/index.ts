@@ -14,3 +14,4 @@ export * from "./components/dropdown-menu";
 export * from "./components/stat-tile";
 export * from "./components/line-chart";
 export * from "./components/bar-chart";
+export * from "./components/skeleton";

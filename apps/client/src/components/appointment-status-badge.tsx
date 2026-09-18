@@ -8,7 +8,7 @@ export const STATUS_LABELS: Record<AppointmentStatus, string> = {
   NO_SHOW: "No-show",
 };
 
-const STATUS_STYLES: Record<AppointmentStatus, string> = {
+export const STATUS_STYLES: Record<AppointmentStatus, string> = {
   CONFIRMED: "bg-status-success/10 text-status-success",
   COMPLETED: "bg-primary/10 text-primary",
   CANCELLED: "bg-status-danger/10 text-status-danger",

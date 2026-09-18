@@ -9,7 +9,7 @@ export class BusinessProfileService {
   findByOrgId(orgId: string): Promise<BusinessProfile | null> {
     return this.prisma.businessProfile.findUnique({
       where: { orgId },
-      include: { services: true, businessHours: true },
+      include: { services: true, businessHours: true, authorityNumbers: true },
     });
   }
 
@@ -27,5 +27,14 @@ export class BusinessProfileService {
 
   remove(id: string): Promise<BusinessProfile> {
     return this.prisma.businessProfile.delete({ where: { id } });
+  }
+
+  async replaceAuthorityNumbers(businessId: string, entries: { name: string; phoneNumber: string }[]): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.authorityNumber.deleteMany({ where: { businessId } }),
+      this.prisma.authorityNumber.createMany({
+        data: entries.map((entry) => ({ businessId, name: entry.name, phoneNumber: entry.phoneNumber })),
+      }),
+    ]);
   }
 }
