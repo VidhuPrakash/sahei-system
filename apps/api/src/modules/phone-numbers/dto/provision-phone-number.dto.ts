@@ -1,4 +1,4 @@
-import { PhoneNumberSource } from '@prisma/client';
+import { PhoneNumberSource, PhoneNumberType } from '@prisma/client';
 import { IsEnum, IsNotEmpty, IsString, Matches, ValidateIf } from 'class-validator';
 
 const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
@@ -12,4 +12,7 @@ export class ProvisionPhoneNumberDto {
   @IsNotEmpty()
   @Matches(E164_PATTERN, { message: 'forwardingFromNumber must be in E.164 format' })
   forwardingFromNumber?: string;
+
+  @IsEnum(PhoneNumberType)
+  numberType!: PhoneNumberType;
 }

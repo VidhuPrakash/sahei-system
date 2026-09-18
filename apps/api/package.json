@@ -28,6 +28,7 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "create-test-account": "tsx scripts/create-test-account.ts",
+    "set-test-account-plan-and-number": "tsx scripts/set-test-account-plan-and-number.ts",
     "auth:generate": "better-auth generate --config src/auth/auth.config.ts -y"
   },
   "prisma": {

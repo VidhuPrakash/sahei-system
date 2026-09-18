@@ -82,8 +82,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex items-center justify-between border-b border-shell-border bg-shell-background px-4 py-3 text-shell-foreground md:px-6">
+    <div className="flex h-screen flex-col overflow-hidden bg-background">
+      <header className="flex shrink-0 items-center justify-between border-b border-shell-border bg-shell-background px-4 py-3 text-shell-foreground md:px-6">
         <div className="flex items-center gap-3">
           <MobileNav open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <MobileNavTrigger asChild>
@@ -143,14 +143,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
-      <div className="flex flex-1">
-        <aside className="hidden w-56 shrink-0 border-r border-shell-border bg-shell-background p-4 md:block">
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-shell-border bg-shell-background p-4 md:block">
           <SectionNav>
             <NavSectionLabel>Workspace</NavSectionLabel>
             <NavLinks />
           </SectionNav>
         </aside>
-        <main className="flex-1 p-4 md:p-6">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <div className="mx-auto w-full max-w-6xl">
             {pageTitle && (
               <h1 className="mb-6 text-2xl font-semibold tracking-tight text-foreground">{pageTitle}</h1>

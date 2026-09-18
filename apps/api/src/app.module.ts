@@ -11,6 +11,7 @@ import { CallTranscriptsModule } from './modules/call-transcripts/call-transcrip
 import { ExotelModule } from './modules/exotel/exotel.module.js';
 import { PhoneNumbersModule } from './modules/phone-numbers/phone-numbers.module.js';
 import { OrganizationModule } from './modules/organizations/organization.module.js';
+import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { OrganizationModule } from './modules/organizations/organization.module.
     ExotelModule,
     PhoneNumbersModule,
     OrganizationModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

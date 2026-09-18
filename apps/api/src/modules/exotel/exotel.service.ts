@@ -1,9 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { PhoneNumberType } from '@prisma/client';
+import type { AvailablePhoneNumber } from '@sahei/types';
 
 /**
  * Design references (Exotel's REST API isn't fully public-doc'd end to end —
- * confirmed against https://developer.exotel.com/docs/exophones/api-reference/purchase-number
+ * confirmed against https://developer.exotel.com/docs/exophones/api-reference/purchase-number,
+ * https://developer.exotel.com/docs/exophones/api-reference/available-numbers,
  * and https://developer.exotel.com/docs/agentstream/developer-guide):
+ * - Browsing numbers to buy: `GET /v2_beta/Accounts/{sid}/AvailablePhoneNumbers/{iso_country_code}/{number_type}`
+ *   (`number_type` one of `Mobile`, `Landline`, `TollFree`) — confirmed live
+ *   against the account, returns a plain JSON array of candidates.
  * - Buying a number: `POST /v2_beta/Accounts/{sid}/IncomingPhoneNumbers` with a
  *   form-encoded `PhoneNumber`, confirmed request/response shape.
  * - Routing a number to our bot: Exotel has no per-call Answer-URL webhook.
@@ -14,12 +20,15 @@ import { Injectable, Logger } from '@nestjs/common';
  *   setup — there is no documented API to create the flow itself. What *is*
  *   documented is attaching an existing flow to a number via its `VoiceUrl`,
  *   which this service automates per newly purchased number.
- * - The "browse available numbers to buy" endpoint exists (referenced from
- *   Exotel's docs navigation) but its exact query shape didn't resolve during
- *   research — `findAvailableNumber` below follows the IncomingPhoneNumbers
- *   REST convention and should be confirmed against Exotel's Available
- *   Numbers API reference before depending on it in production.
  */
+
+const COUNTRY_CODE = 'IN';
+
+const EXOTEL_NUMBER_TYPE_SEGMENT: Record<PhoneNumberType, string> = {
+  MOBILE: 'Mobile',
+  LANDLINE: 'Landline',
+  TOLLFREE: 'TollFree',
+};
 
 export class ExotelApiError extends Error {
   constructor(
@@ -53,8 +62,11 @@ interface ExotelIncomingNumberResponse {
   phone_number: string;
 }
 
-interface ExotelAvailableNumbersResponse {
-  phone_numbers?: { phone_number: string }[];
+interface ExotelAvailableNumberEntry {
+  phone_number: string;
+  region?: string;
+  rental_price: string;
+  number_type: string;
 }
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -63,14 +75,29 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export class ExotelService {
   private readonly logger = new Logger(ExotelService.name);
 
-  async purchaseNumber(): Promise<ExotelPurchasedNumber> {
+  async purchaseNumber(phoneNumber: string): Promise<ExotelPurchasedNumber> {
     const config = this.requireConfig();
-    const candidate = await this.findAvailableNumber(config);
     const purchased = await this.request<ExotelIncomingNumberResponse>(config, '/IncomingPhoneNumbers', {
       method: 'POST',
-      body: new URLSearchParams({ PhoneNumber: candidate, FriendlyName: candidate }),
+      body: new URLSearchParams({ PhoneNumber: phoneNumber, FriendlyName: phoneNumber }),
     });
     return { phoneNumber: purchased.phone_number, exotelSid: purchased.sid };
+  }
+
+  async listAvailableNumbers(numberType: PhoneNumberType): Promise<AvailablePhoneNumber[]> {
+    const config = this.requireConfig();
+    const segment = EXOTEL_NUMBER_TYPE_SEGMENT[numberType];
+    const result = await this.request<ExotelAvailableNumberEntry[]>(
+      config,
+      `/AvailablePhoneNumbers/${COUNTRY_CODE}/${segment}`,
+      { method: 'GET' },
+    );
+    return result.map((entry) => ({
+      phoneNumber: entry.phone_number,
+      numberType,
+      monthlyPriceInr: Number(entry.rental_price),
+      region: entry.region,
+    }));
   }
 
   /**
@@ -112,19 +139,6 @@ export class ExotelService {
       this.logger.warn(`Falling back to manual routing setup for ${params.exotelPhoneSid}: ${reason}`);
       return { status: 'manual_setup_required', reason };
     }
-  }
-
-  private async findAvailableNumber(config: ExotelConfig): Promise<string> {
-    const result = await this.request<ExotelAvailableNumbersResponse>(
-      config,
-      '/IncomingPhoneNumbers/available',
-      { method: 'GET' },
-    );
-    const candidate = result.phone_numbers?.[0]?.phone_number;
-    if (!candidate) {
-      throw new ExotelApiError('No available Exotel numbers to purchase', 200, result);
-    }
-    return candidate;
   }
 
   private requireConfig(): ExotelConfig {

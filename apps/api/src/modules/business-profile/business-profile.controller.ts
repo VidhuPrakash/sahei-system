@@ -41,6 +41,10 @@ export class BusinessProfileController {
       );
     }
 
+    if (dto.authorityNumbers) {
+      await this.businessProfiles.replaceAuthorityNumbers(profile.id, dto.authorityNumbers);
+    }
+
     return this.businessProfiles.findByOrgId(orgId);
   }
 }

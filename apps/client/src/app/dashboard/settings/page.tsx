@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { EmptyState } from "@/components/empty-state";
+import { SettingsView } from "./settings-view";
 
 export const metadata: Metadata = { title: "Manage Organization" };
 
 export default function SettingsPage() {
-  return <EmptyState description="Organization details, phone number, and team settings will live here." />;
+  return <SettingsView />;
 }
