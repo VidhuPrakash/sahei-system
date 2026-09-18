@@ -11,3 +11,6 @@ export * from "./components/textarea";
 export * from "./components/stepper";
 export * from "./components/radio-card";
 export * from "./components/dropdown-menu";
+export * from "./components/stat-tile";
+export * from "./components/line-chart";
+export * from "./components/bar-chart";
