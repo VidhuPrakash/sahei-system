@@ -7,6 +7,7 @@ import { BusinessProfileService } from "../business-profile/business-profile.ser
 import { ServicesService } from "../services/services.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import type { BookAppointmentDto } from "./dto/book-appointment.dto.js";
+import type { CancelBookingDto } from "./dto/cancel-booking.dto.js";
 import type { CheckAvailabilityDto } from "./dto/check-availability.dto.js";
 import type { LogInquiryDto } from "./dto/log-inquiry.dto.js";
 
@@ -72,6 +73,34 @@ export class BookingService {
     return { status: "confirmed", bookingReference: appointment.bookingReference };
   }
 
+  async cancelBooking(dto: CancelBookingDto): Promise<{ status: "cancelled"; bookingReference: string }> {
+    const business = await this.businessProfiles.findById(dto.businessId);
+    if (!business) {
+      throw new NotFoundException(`No business with id ${dto.businessId}`);
+    }
+
+    const range = dto.dateHint ? this.dayRangeFrom(dto.dateHint) : { from: new Date() };
+    const candidates = await this.appointments.findActiveByPhone(dto.businessId, dto.customerPhone, range);
+
+    if (candidates.length === 0) {
+      throw new NotFoundException({
+        error: "appointment_not_found",
+        message: `No upcoming appointment found for ${dto.customerPhone}`,
+      });
+    }
+    if (candidates.length > 1) {
+      throw new BadRequestException({
+        error: "ambiguous_appointment",
+        message: "Multiple upcoming appointments match — ask the caller which date, then retry with dateHint",
+        candidates: candidates.map((a) => ({ scheduledAt: a.scheduledAt, bookingReference: a.bookingReference })),
+      });
+    }
+
+    // Length is exactly 1 here (checked above), so this index always exists.
+    const cancelled = await this.appointments.cancel(dto.businessId, dto.customerPhone, candidates[0]!.id);
+    return { status: "cancelled", bookingReference: cancelled.bookingReference };
+  }
+
   async logInquiry(dto: LogInquiryDto): Promise<{ logged: true; inquiryId: string }> {
     const business = await this.businessProfiles.findById(dto.businessId);
     if (!business) {
@@ -122,6 +151,14 @@ export class BookingService {
 
     // Length is exactly 1 here (checked above), so this index always exists.
     return { business, service: candidates[0]! };
+  }
+
+  private dayRangeFrom(dateHint: string): { from: Date; to: Date } {
+    const dayStart = new Date(`${dateHint}T00:00:00${BUSINESS_UTC_OFFSET}`);
+    const dayEnd = new Date(`${dateHint}T23:59:59${BUSINESS_UTC_OFFSET}`);
+    const now = new Date();
+    // Clamp so a dateHint of today doesn't resurrect an appointment already passed today.
+    return { from: dayStart > now ? dayStart : now, to: dayEnd };
   }
 
   private computeSlot(date: string, time: string): Slot {

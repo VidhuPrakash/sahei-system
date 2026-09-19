@@ -28,7 +28,11 @@ describe("BookingService", () => {
   let businessProfiles: { findById: ReturnType<typeof vi.fn> };
   let services: { findAllForBusiness: ReturnType<typeof vi.fn> };
   let businessHours: { findAllForBusiness: ReturnType<typeof vi.fn> };
-  let appointments: { create: ReturnType<typeof vi.fn> };
+  let appointments: {
+    create: ReturnType<typeof vi.fn>;
+    findActiveByPhone: ReturnType<typeof vi.fn>;
+    cancel: ReturnType<typeof vi.fn>;
+  };
   let booking: BookingService;
 
   const business = { id: "business-1", orgId: "org-1" } as never;
@@ -40,7 +44,7 @@ describe("BookingService", () => {
     businessProfiles = { findById: vi.fn().mockResolvedValue(business) };
     services = { findAllForBusiness: vi.fn().mockResolvedValue([makeService()]) };
     businessHours = { findAllForBusiness: vi.fn().mockResolvedValue(tuesdayHours) };
-    appointments = { create: vi.fn() };
+    appointments = { create: vi.fn(), findActiveByPhone: vi.fn().mockResolvedValue([]), cancel: vi.fn() };
 
     booking = new BookingService(
       prisma as never,
@@ -171,6 +175,51 @@ describe("BookingService", () => {
       const result = await booking.bookAppointment(dto, "+919999999999");
       expect(result).toEqual({ status: "confirmed", bookingReference: "EFGH5678" });
       expect(appointments.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("cancelBooking", () => {
+    it("throws NotFoundException when the business does not exist", async () => {
+      businessProfiles.findById.mockResolvedValue(null);
+      await expect(
+        booking.cancelBooking({ businessId: "nope", customerPhone: "+919999999999" }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("throws NotFoundException with an appointment_not_found code when nothing matches", async () => {
+      appointments.findActiveByPhone.mockResolvedValue([]);
+      const err = await booking
+        .cancelBooking({ businessId: "business-1", customerPhone: "+919999999999" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect((err as NotFoundException).getResponse()).toMatchObject({ error: "appointment_not_found" });
+    });
+
+    it("throws BadRequestException with an ambiguous_appointment code and candidates when multiple match", async () => {
+      appointments.findActiveByPhone.mockResolvedValue([
+        { id: "a1", scheduledAt: new Date("2026-09-20T04:30:00.000Z"), bookingReference: "AAAA1111" },
+        { id: "a2", scheduledAt: new Date("2026-09-22T04:30:00.000Z"), bookingReference: "BBBB2222" },
+      ]);
+      const err = await booking
+        .cancelBooking({ businessId: "business-1", customerPhone: "+919999999999" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        error: "ambiguous_appointment",
+        candidates: [
+          { scheduledAt: new Date("2026-09-20T04:30:00.000Z"), bookingReference: "AAAA1111" },
+          { scheduledAt: new Date("2026-09-22T04:30:00.000Z"), bookingReference: "BBBB2222" },
+        ],
+      });
+      expect(appointments.cancel).not.toHaveBeenCalled();
+    });
+
+    it("cancels the single matching appointment", async () => {
+      appointments.findActiveByPhone.mockResolvedValue([{ id: "a1", bookingReference: "AAAA1111" }]);
+      appointments.cancel.mockResolvedValue({ id: "a1", bookingReference: "AAAA1111" });
+      const result = await booking.cancelBooking({ businessId: "business-1", customerPhone: "+919999999999" });
+      expect(result).toEqual({ status: "cancelled", bookingReference: "AAAA1111" });
+      expect(appointments.cancel).toHaveBeenCalledWith("business-1", "+919999999999", "a1");
     });
   });
 

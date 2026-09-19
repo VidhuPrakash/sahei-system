@@ -57,6 +57,35 @@ export class AppointmentsService {
     return this.prisma.appointment.update({ where: { id }, data: { status } });
   }
 
+  findActiveByPhone(
+    businessId: string,
+    customerPhone: string,
+    range: { from: Date; to?: Date },
+  ): Promise<Appointment[]> {
+    return this.prisma.appointment.findMany({
+      where: {
+        businessId,
+        customerPhone,
+        status: { not: "CANCELLED" },
+        scheduledAt: { gte: range.from, ...(range.to ? { lte: range.to } : {}) },
+      },
+      orderBy: { scheduledAt: "asc" },
+    });
+  }
+
+  async cancel(businessId: string, customerPhone: string, id: string): Promise<Appointment> {
+    // customerPhone/businessId never appear in the update's `where`, so this
+    // lookup is the only guard against cancelling another customer's booking.
+    const appointment = await this.prisma.appointment.findFirst({
+      where: { id, businessId, customerPhone },
+    });
+    if (!appointment) {
+      throw new NotFoundException(`No appointment ${id} for this customer`);
+    }
+
+    return this.prisma.appointment.update({ where: { id }, data: { status: "CANCELLED" } });
+  }
+
   async updateStatusForOrg(
     orgId: string,
     id: string,
