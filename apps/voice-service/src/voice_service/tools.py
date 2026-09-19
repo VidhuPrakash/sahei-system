@@ -1,15 +1,15 @@
 """Tool schemas for the booking flow's side-effecting actions.
 
-Three tools, each a `FunctionSchema` with its handler attached directly (the
+Four tools, each a `FunctionSchema` with its handler attached directly (the
 LLM service auto-registers any schema that carries a `handler` the moment it's
 advertised via `LLMContext.tools` — no separate `register_function` call
 needed):
 
-- `check_availability` / `book_appointment`: the actions in the scripted
-  booking flow (see `prompts.BOOKING_SYSTEM_PROMPT`) that need a real backend
-  round-trip. Each handler POSTs to the `apps/api` booking endpoints via the
-  shared `httpx.AsyncClient` on `CallContext` (see `call_context.py`),
-  reachable through `FunctionCallParams.app_resources`.
+- `check_availability` / `book_appointment` / `cancel_appointment`: the
+  actions in the scripted booking flow (see `prompts.BOOKING_SYSTEM_PROMPT`)
+  that need a real backend round-trip. Each handler POSTs to the `apps/api`
+  booking endpoints via the shared `httpx.AsyncClient` on `CallContext` (see
+  `call_context.py`), reachable through `FunctionCallParams.app_resources`.
 - `log_inquiry`: telemetry, not a Q&A tool. Fired whenever a turn goes off the
   booking rails (a business question answered from org context, an off-topic
   remark, an explicit non-booking call) so the outcome is recorded somewhere,
@@ -37,7 +37,12 @@ from voice_service.call_context import CallContext
 # "error" field that mean something distinct from a technical outage — passed
 # through to the LLM verbatim so it can react (see prompts.BOOKING_SYSTEM_PROMPT)
 # instead of apologizing for a fake backend_unavailable.
-_KNOWN_BACKEND_ERROR_CODES = {"ambiguous_service", "service_not_found"}
+_KNOWN_BACKEND_ERROR_CODES = {
+    "ambiguous_service",
+    "service_not_found",
+    "appointment_not_found",
+    "ambiguous_appointment",
+}
 
 _MAX_ATTEMPTS = 2
 _RETRY_BACKOFF_SECONDS = 0.5
@@ -67,18 +72,24 @@ async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: Any) -
     raise last_exc
 
 
-def _backend_error_result(exc: httpx.HTTPError) -> dict[str, str]:
+def _backend_error_result(exc: httpx.HTTPError) -> dict[str, Any]:
     """Maps a failed booking-API call to the {"error": ...} shape the LLM sees.
     A recognized structured code (e.g. ambiguous_service) passes through
     verbatim; anything else — a 5xx, a network failure, an unrecognized 4xx —
-    collapses to the generic backend_unavailable apology."""
+    collapses to the generic backend_unavailable apology. An ambiguous_appointment
+    body's "candidates" array is preserved too, so the LLM can read the options
+    back to the caller instead of just knowing there's a conflict."""
     if isinstance(exc, httpx.HTTPStatusError):
         try:
-            error_code = exc.response.json().get("error")
+            body = exc.response.json()
         except ValueError:
-            error_code = None
+            body = {}
+        error_code = body.get("error")
         if error_code in _KNOWN_BACKEND_ERROR_CODES:
-            return {"error": error_code}
+            result: dict[str, Any] = {"error": error_code}
+            if "candidates" in body:
+                result["candidates"] = body["candidates"]
+            return result
     return {"error": "backend_unavailable"}
 
 # Pilot scope: the one hardcoded business's exact service names, both the
@@ -181,6 +192,29 @@ async def _handle_log_inquiry(params: FunctionCallParams) -> None:
     await params.result_callback(result)
 
 
+async def _handle_cancel_appointment(params: FunctionCallParams) -> None:
+    ctx: CallContext = params.app_resources
+    date_hint = params.arguments.get("date_hint")
+    payload: dict[str, Any] = {
+        "businessId": ctx.business_id,
+        "customerPhone": ctx.customer_phone,
+    }
+    if date_hint:
+        payload["dateHint"] = date_hint
+    try:
+        # Idempotent server-side (findActiveByPhone filters out rows already
+        # CANCELLED), so retrying a lost response is safe — same shape as
+        # book_appointment, unlike log_inquiry's fire-and-forget plain post.
+        response = await _post_with_retry(ctx.http_client, "/booking/cancel", json=payload)
+        result = response.json()
+        if result.get("status") == "cancelled":
+            ctx.cancelled_booking_reference = result.get("bookingReference")
+    except httpx.HTTPError as exc:
+        logger.error("cancel_appointment request failed: {}", exc)
+        result = _backend_error_result(exc)
+    await params.result_callback(result)
+
+
 async def post_call_transcript(
     ctx: CallContext,
     transcript: Sequence[Any],
@@ -192,16 +226,22 @@ async def post_call_transcript(
     cleanup must complete even if this backend round-trip fails."""
     if ctx.booking_reference:
         outcome = "BOOKED"
+        booking_reference = ctx.booking_reference
+    elif ctx.cancelled_booking_reference:
+        outcome = "CANCELLED"
+        booking_reference = ctx.cancelled_booking_reference
     elif ctx.inquiry_logged:
         outcome = "INQUIRY"
+        booking_reference = None
     else:
         outcome = "NO_OUTCOME"
+        booking_reference = None
     payload = {
         "businessId": ctx.business_id,
         "callId": ctx.call_sid,
         "customerPhone": ctx.customer_phone,
         "outcome": outcome,
-        "bookingReference": ctx.booking_reference,
+        "bookingReference": booking_reference,
         "transcript": transcript,
         "startedAt": started_at.isoformat(),
         "endedAt": ended_at.isoformat(),
@@ -290,11 +330,32 @@ _LOG_INQUIRY_SCHEMA = FunctionSchema(
     handler=_handle_log_inquiry,
 )
 
+_CANCEL_APPOINTMENT_SCHEMA = FunctionSchema(
+    name="cancel_appointment",
+    description=(
+        "Cancel the caller's own upcoming appointment, only after they have "
+        "explicitly agreed to the cancellation."
+    ),
+    properties={
+        "date_hint": {
+            "type": "string",
+            "description": (
+                "Optional ISO 8601 date (YYYY-MM-DD) narrowing which appointment "
+                "to cancel — give this when the caller mentioned a date, or when "
+                "narrowing down after a previous ambiguous_appointment result."
+            ),
+        },
+    },
+    required=[],
+    handler=_handle_cancel_appointment,
+)
+
 BOOKING_TOOLS: ToolsSchema = ToolsSchema(
     standard_tools=[
         _CHECK_AVAILABILITY_SCHEMA,
         _BOOK_APPOINTMENT_SCHEMA,
         _LOG_INQUIRY_SCHEMA,
+        _CANCEL_APPOINTMENT_SCHEMA,
     ]
 )
 
@@ -305,4 +366,5 @@ _HANDLERS: dict[str, Any] = {
     "check_availability": _handle_check_availability,
     "book_appointment": _handle_book_appointment,
     "log_inquiry": _handle_log_inquiry,
+    "cancel_appointment": _handle_cancel_appointment,
 }

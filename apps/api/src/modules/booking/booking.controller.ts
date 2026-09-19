@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from 
 import { ApiKeyGuard } from "./api-key.guard.js";
 import { BookingService } from "./booking.service.js";
 import { BookAppointmentDto } from "./dto/book-appointment.dto.js";
+import { CancelBookingDto } from "./dto/cancel-booking.dto.js";
 import { CheckAvailabilityDto } from "./dto/check-availability.dto.js";
 import { LogInquiryDto } from "./dto/log-inquiry.dto.js";
 
@@ -29,5 +30,10 @@ export class BookingController {
   @Post("log-inquiry")
   logInquiry(@Body() dto: LogInquiryDto) {
     return this.booking.logInquiry(dto);
+  }
+
+  @Post("cancel")
+  cancelBooking(@Body() dto: CancelBookingDto) {
+    return this.booking.cancelBooking(dto);
   }
 }

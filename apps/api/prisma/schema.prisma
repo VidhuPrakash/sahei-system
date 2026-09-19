@@ -377,6 +377,7 @@ enum CallOutcome {
   BOOKED
   INQUIRY
   NO_OUTCOME
+  CANCELLED
 
   @@map("call_outcome")
 }
