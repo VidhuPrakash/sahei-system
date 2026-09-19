@@ -23,7 +23,8 @@ class CallContext:
     http_client: httpx.AsyncClient
     session_store: CallSessionStore
     call_sid: str
-    # Set by tools.py's handlers on a successful booking/inquiry; read at call
-    # end (bot.run_bot's finally block) to derive the call's outcome.
+    # Set by tools.py's handlers on a successful booking/inquiry/cancellation;
+    # read at call end (bot.run_bot's finally block) to derive the call's outcome.
     booking_reference: str | None = None
     inquiry_logged: bool = False
+    cancelled_booking_reference: str | None = None

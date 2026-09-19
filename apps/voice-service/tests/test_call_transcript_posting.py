@@ -95,6 +95,76 @@ async def test_log_inquiry_sets_inquiry_logged_on_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_appointment_sets_cancelled_booking_reference_on_success() -> None:
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "cancelled", "bookingReference": "AAAA1111"})
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {})
+
+    await tools._handle_cancel_appointment(params)
+    await call_context.http_client.aclose()
+
+    assert call_context.cancelled_booking_reference == "AAAA1111"
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_passes_through_appointment_not_found() -> None:
+    attempts = 0
+
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(404, json={"error": "appointment_not_found", "message": "none"})
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {})
+
+    await tools._handle_cancel_appointment(params)
+    await call_context.http_client.aclose()
+
+    assert attempts == 1
+    result = params.result_callback.call_args.args[0]
+    assert result == {"error": "appointment_not_found"}
+    assert call_context.cancelled_booking_reference is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_passes_through_ambiguous_appointment_with_candidates() -> None:
+    candidates = [
+        {"scheduledAt": "2026-09-20T10:00:00.000Z", "bookingReference": "AAAA1111"},
+        {"scheduledAt": "2026-09-22T15:00:00.000Z", "bookingReference": "BBBB2222"},
+    ]
+
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": "ambiguous_appointment", "message": "pick one", "candidates": candidates},
+        )
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {})
+
+    await tools._handle_cancel_appointment(params)
+    await call_context.http_client.aclose()
+
+    result = params.result_callback.call_args.args[0]
+    assert result == {"error": "ambiguous_appointment", "candidates": candidates}
+
+
+@pytest.mark.asyncio
 async def test_post_call_transcript_reports_booked_outcome() -> None:
     captured: list[httpx.Request] = []
 
@@ -154,6 +224,31 @@ async def test_post_call_transcript_reports_inquiry_outcome_when_no_booking() ->
     body = json.loads(captured[0].content)
     assert body["outcome"] == "INQUIRY"
     assert body["bookingReference"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_call_transcript_reports_cancelled_outcome() -> None:
+    captured: list[httpx.Request] = []
+
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={})
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        ),
+        cancelled_booking_reference="AAAA1111",
+    )
+    started_at = datetime(2026, 9, 15, 10, 0, tzinfo=UTC)
+    ended_at = datetime(2026, 9, 15, 10, 5, tzinfo=UTC)
+
+    await tools.post_call_transcript(call_context, [], started_at, ended_at)
+    await call_context.http_client.aclose()
+
+    body = json.loads(captured[0].content)
+    assert body["outcome"] == "CANCELLED"
+    assert body["bookingReference"] == "AAAA1111"
 
 
 @pytest.mark.asyncio
