@@ -59,21 +59,25 @@ describe("BookingService", () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it("throws NotFoundException when no service matches", async () => {
+    it("throws NotFoundException with a service_not_found code when no service matches", async () => {
       services.findAllForBusiness.mockResolvedValue([makeService({ name: "Manicure" })]);
-      await expect(
-        booking.checkAvailability({ businessId: "business-1", service: "Haircut", date: "2026-09-15", time: "10:00" }),
-      ).rejects.toThrow(NotFoundException);
+      const err = await booking
+        .checkAvailability({ businessId: "business-1", service: "Haircut", date: "2026-09-15", time: "10:00" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect((err as NotFoundException).getResponse()).toMatchObject({ error: "service_not_found" });
     });
 
-    it("throws BadRequestException when multiple services match", async () => {
+    it("throws BadRequestException with an ambiguous_service code when multiple services match", async () => {
       services.findAllForBusiness.mockResolvedValue([
         makeService({ name: "Hair Spa" }),
         makeService({ name: "Hair Color" }),
       ]);
-      await expect(
-        booking.checkAvailability({ businessId: "business-1", service: "hair", date: "2026-09-15", time: "10:00" }),
-      ).rejects.toThrow(BadRequestException);
+      const err = await booking
+        .checkAvailability({ businessId: "business-1", service: "hair", date: "2026-09-15", time: "10:00" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toMatchObject({ error: "ambiguous_service" });
     });
 
     it("is unavailable when the business is closed that day", async () => {

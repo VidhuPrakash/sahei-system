@@ -108,12 +108,16 @@ export class BookingService {
     );
 
     if (candidates.length === 0) {
-      throw new NotFoundException(`No service matching "${serviceName}" for this business`);
+      throw new NotFoundException({
+        error: "service_not_found",
+        message: `No service matching "${serviceName}" for this business`,
+      });
     }
     if (candidates.length > 1) {
-      throw new BadRequestException(
-        `"${serviceName}" matches multiple services — ask the caller to be more specific`,
-      );
+      throw new BadRequestException({
+        error: "ambiguous_service",
+        message: `"${serviceName}" matches multiple services — ask the caller to be more specific`,
+      });
     }
 
     // Length is exactly 1 here (checked above), so this index always exists.

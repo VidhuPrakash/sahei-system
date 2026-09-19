@@ -281,6 +281,28 @@ async def test_transcript_in_logger_starts_a_new_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transcript_in_logger_ignores_blank_transcript() -> None:
+    turns = TurnTracker()
+    transcript_logger = TranscriptInLogger(turns)
+
+    await run_test(
+        Pipeline([transcript_logger]),
+        frames_to_send=[
+            TranscriptionFrame(
+                text="   ",
+                user_id="test-user",
+                timestamp=time_now_iso8601(),
+                language=Language.ML_IN,
+            ),
+            SleepFrame(sleep=0.1),
+        ],
+    )
+
+    assert turns.turn_id == 0
+    assert turns.turn_started_at is None
+
+
+@pytest.mark.asyncio
 async def test_metrics_logger_computes_latency_from_transcript_to_tts_start() -> None:
     turns = TurnTracker(turn_id=1, turn_started_at=time.monotonic())
     metrics_logger = MetricsAndLatencyLogger(turns)

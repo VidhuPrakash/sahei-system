@@ -17,6 +17,7 @@ from pipecat.frames.frames import (
     LLMTextFrame,
     MetricsFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
     TTSStartedFrame,
 )
 from pipecat.metrics.metrics import (
@@ -49,6 +50,9 @@ from voice_service.call_context import CallContext
 from voice_service.prompts import (
     BOOKING_SYSTEM_PROMPT,
     ORG_CONTEXT,
+    SILENCE_GOODBYE_TEXT,
+    SILENCE_REPROMPT_TEXT,
+    TECHNICAL_ISSUE_TEXT,
     current_date_context,
     known_caller_context,
 )
@@ -110,7 +114,7 @@ class TranscriptInLogger(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame):
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             self._turns.turn_id += 1
             self._turns.turn_started_at = time.monotonic()
             logger.info("Turn {} transcript: {}", self._turns.turn_id, frame.text)
@@ -236,25 +240,32 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         api_key=os.environ["SARVAM_API_KEY"],
         sample_rate=8000,
         settings=SarvamTTSService.Settings(
-            model="bulbul:v3", voice="mani", pace=0.95, language=Language.ML_IN
+            model="bulbul:v3", voice="mani", language=Language.ML_IN
         ),
     )
     context = LLMContext(tools=BOOKING_TOOLS)
     context_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
+        # Barge-in: checked against the installed pipecat version's default
+        # (VADUserTurnStartStrategy, enable_interruptions=True) — callers can
+        # already interrupt the bot mid-sentence, kept as-is.
+        # user_idle_timeout drives the silence re-prompt/hangup handlers below.
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=SileroVADAnalyzer(), user_idle_timeout=9.0
+        ),
     )
     assistant_logger = AssistantResponseLogger()
     turns = TurnTracker()
     transcript_logger = TranscriptInLogger(turns)
     metrics_logger = MetricsAndLatencyLogger(turns)
+    user_aggregator = context_aggregator.user()
 
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
             transcript_logger,
-            context_aggregator.user(),
+            user_aggregator,
             llm,
             assistant_logger,
             tts,
@@ -288,6 +299,11 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         # so the default RTVI processor blocks pipeline setup until it times out.
         enable_rtvi=False,
         app_resources=call_context,
+        # Coarse whole-call staleness backstop, well above user_idle_timeout's
+        # ~9s re-prompt/hangup cycle below — this only fires if that logic
+        # itself gets stuck. Lowered from the library's 300s default so a
+        # stuck worker doesn't sit on a call slot for 5 minutes.
+        idle_timeout_secs=60,
     )
 
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
@@ -302,6 +318,35 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     async def on_client_disconnected(transport: BaseTransport, client: object) -> None:
         logger.info("Exotel call disconnected")
         await runner.cancel()
+
+    silence_reprompt_count = 0
+
+    @user_aggregator.event_handler("on_user_turn_started")  # type: ignore[untyped-decorator]
+    async def on_user_turn_started(aggregator: object, strategy: object) -> None:
+        nonlocal silence_reprompt_count
+        silence_reprompt_count = 0
+
+    @user_aggregator.event_handler("on_user_turn_idle")  # type: ignore[untyped-decorator]
+    async def on_user_turn_idle(aggregator: object) -> None:
+        nonlocal silence_reprompt_count
+        silence_reprompt_count += 1
+        if silence_reprompt_count == 1:
+            logger.info("Caller silent for {}s, re-prompting", 9.0)
+            await worker.queue_frames([TTSSpeakFrame(text=SILENCE_REPROMPT_TEXT)])
+        else:
+            logger.info("Caller still silent after re-prompt, ending call")
+            await worker.queue_frames([TTSSpeakFrame(text=SILENCE_GOODBYE_TEXT)])
+            await worker.stop_when_done()  # type: ignore[no-untyped-call]
+
+    fallback_spoken = False
+
+    @worker.event_handler("on_pipeline_error")  # type: ignore[untyped-decorator]
+    async def on_pipeline_error(worker: PipelineWorker, frame: object) -> None:
+        nonlocal fallback_spoken
+        logger.error("Pipeline error: {}", frame)
+        if not fallback_spoken:
+            fallback_spoken = True
+            await worker.queue_frames([TTSSpeakFrame(text=TECHNICAL_ISSUE_TEXT)])
 
     try:
         await runner.run()

@@ -20,6 +20,7 @@ LLM instead of raising — a backend hiccup should end the tool call, not crash
 the call's audio pipeline.
 """
 
+import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -31,6 +32,54 @@ from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
 
 from voice_service.call_context import CallContext
+
+# Error codes apps/api's booking.service.ts returns in a 4xx JSON body's
+# "error" field that mean something distinct from a technical outage — passed
+# through to the LLM verbatim so it can react (see prompts.BOOKING_SYSTEM_PROMPT)
+# instead of apologizing for a fake backend_unavailable.
+_KNOWN_BACKEND_ERROR_CODES = {"ambiguous_service", "service_not_found"}
+
+_MAX_ATTEMPTS = 2
+_RETRY_BACKOFF_SECONDS = 0.5
+
+
+async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+    """POST with one retry after a short backoff for a connection/timeout failure
+    or 5xx. A 4xx means the request itself is wrong (bad service match, etc.) —
+    retrying changes nothing, so it's raised immediately instead."""
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            response = await client.post(url, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code < 500 or attempt == _MAX_ATTEMPTS - 1:
+                raise
+            last_exc = exc
+        except httpx.HTTPError as exc:
+            if attempt == _MAX_ATTEMPTS - 1:
+                raise
+            last_exc = exc
+        logger.warning("POST {} failed (attempt {}), retrying: {}", url, attempt + 1, last_exc)
+        await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
+    assert last_exc is not None  # unreachable: the final attempt above always raises instead
+    raise last_exc
+
+
+def _backend_error_result(exc: httpx.HTTPError) -> dict[str, str]:
+    """Maps a failed booking-API call to the {"error": ...} shape the LLM sees.
+    A recognized structured code (e.g. ambiguous_service) passes through
+    verbatim; anything else — a 5xx, a network failure, an unrecognized 4xx —
+    collapses to the generic backend_unavailable apology."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            error_code = exc.response.json().get("error")
+        except ValueError:
+            error_code = None
+        if error_code in _KNOWN_BACKEND_ERROR_CODES:
+            return {"error": error_code}
+    return {"error": "backend_unavailable"}
 
 # Pilot scope: the one hardcoded business's exact service names, both the
 # English catalog name (Service.name) and Malayalam name (Service.nameLocal)
@@ -64,8 +113,9 @@ async def _handle_check_availability(params: FunctionCallParams) -> None:
         "time": time_,
     }
     try:
-        response = await ctx.http_client.post("/booking/check-availability", json=payload)
-        response.raise_for_status()
+        response = await _post_with_retry(
+            ctx.http_client, "/booking/check-availability", json=payload
+        )
         result = response.json()
         # Written regardless of whether the slot is available — these are the
         # caller's stated preferences, not a confirmed booking. If unavailable,
@@ -74,7 +124,7 @@ async def _handle_check_availability(params: FunctionCallParams) -> None:
         await ctx.session_store.upsert(ctx.call_sid, service=service, date=date, time=time_)
     except httpx.HTTPError as exc:
         logger.error("check_availability request failed: {}", exc)
-        result = {"error": "backend_unavailable"}
+        result = _backend_error_result(exc)
     await params.result_callback(result)
 
 
@@ -94,12 +144,12 @@ async def _handle_book_appointment(params: FunctionCallParams) -> None:
         "customerArea": customer_area,
     }
     try:
-        response = await ctx.http_client.post(
+        response = await _post_with_retry(
+            ctx.http_client,
             "/booking/book-appointment",
             json=payload,
             headers={"x-customer-phone": ctx.customer_phone},
         )
-        response.raise_for_status()
         result = response.json()
         if result.get("status") == "confirmed":
             ctx.booking_reference = result.get("bookingReference")
@@ -109,7 +159,7 @@ async def _handle_book_appointment(params: FunctionCallParams) -> None:
         await ctx.session_store.delete(ctx.call_sid)
     except httpx.HTTPError as exc:
         logger.error("book_appointment request failed: {}", exc)
-        result = {"error": "backend_unavailable"}
+        result = _backend_error_result(exc)
     await params.result_callback(result)
 
 

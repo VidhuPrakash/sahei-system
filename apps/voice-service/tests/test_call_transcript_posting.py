@@ -194,3 +194,96 @@ async def test_post_call_transcript_never_raises_on_backend_failure() -> None:
 
     await tools.post_call_transcript(call_context, [], started_at, ended_at)
     await call_context.http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_check_availability_retries_once_on_connection_timeout() -> None:
+    attempts = 0
+
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectTimeout("timed out", request=request)
+        return httpx.Response(200, json={"available": True})
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {"service": "Haircut", "date": "2026-09-15", "time": "10:00"})
+
+    await tools._handle_check_availability(params)
+    await call_context.http_client.aclose()
+
+    assert attempts == 2
+    result = params.result_callback.call_args.args[0]
+    assert result == {"available": True}
+
+
+@pytest.mark.asyncio
+async def test_check_availability_gives_up_after_max_attempts_on_5xx() -> None:
+    attempts = 0
+
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(500)
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {"service": "Haircut", "date": "2026-09-15", "time": "10:00"})
+
+    await tools._handle_check_availability(params)
+    await call_context.http_client.aclose()
+
+    assert attempts == 2
+    result = params.result_callback.call_args.args[0]
+    assert result == {"error": "backend_unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_check_availability_passes_through_ambiguous_service_without_retry() -> None:
+    attempts = 0
+
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(400, json={"error": "ambiguous_service", "message": "pick one"})
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {"service": "hair", "date": "2026-09-15", "time": "10:00"})
+
+    await tools._handle_check_availability(params)
+    await call_context.http_client.aclose()
+
+    assert attempts == 1
+    result = params.result_callback.call_args.args[0]
+    assert result == {"error": "ambiguous_service"}
+
+
+@pytest.mark.asyncio
+async def test_check_availability_falls_back_to_backend_unavailable_on_unrecognized_4xx() -> None:
+    def _fake_backend(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "boom"})
+
+    call_context = _make_call_context(
+        http_client=httpx.AsyncClient(
+            base_url="http://booking-api.test", transport=httpx.MockTransport(_fake_backend)
+        )
+    )
+    params = _fake_params(call_context, {"service": "Haircut", "date": "2026-09-15", "time": "10:00"})
+
+    await tools._handle_check_availability(params)
+    await call_context.http_client.aclose()
+
+    result = params.result_callback.call_args.args[0]
+    assert result == {"error": "backend_unavailable"}
