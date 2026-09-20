@@ -215,6 +215,40 @@ async def _handle_cancel_appointment(params: FunctionCallParams) -> None:
     await params.result_callback(result)
 
 
+async def lookup_authority(
+    http_client: httpx.AsyncClient, business_id: str, customer_phone: str
+) -> tuple[bool, str | None]:
+    """Checks whether the caller is a registered authority number for this
+    business. Called directly from bot.run_bot right after customer_phone is
+    resolved, before any pipeline/session setup — not a FunctionCallParams
+    tool handler, since no LLM/pipeline exists yet at that point. Fails open:
+    a lookup failure falls back to the normal booking flow rather than
+    blocking or misrouting an ordinary customer call."""
+    payload = {"businessId": business_id, "phoneNumber": customer_phone}
+    try:
+        response = await _post_with_retry(http_client, "/authority/lookup", json=payload)
+        result = response.json()
+        return bool(result.get("isAuthority")), result.get("name")
+    except httpx.HTTPError as exc:
+        logger.error("authority-lookup request failed: {}", exc)
+        return False, None
+
+
+async def _handle_get_appointments_summary(params: FunctionCallParams) -> None:
+    ctx: CallContext = params.app_resources
+    date = params.arguments.get("date")
+    payload: dict[str, Any] = {"businessId": ctx.business_id}
+    if date:
+        payload["date"] = date
+    try:
+        response = await _post_with_retry(ctx.http_client, "/authority/appointments", json=payload)
+        result = response.json()
+    except httpx.HTTPError as exc:
+        logger.error("get_appointments_summary request failed: {}", exc)
+        result = _backend_error_result(exc)
+    await params.result_callback(result)
+
+
 async def post_call_transcript(
     ctx: CallContext,
     transcript: Sequence[Any],
@@ -224,7 +258,10 @@ async def post_call_transcript(
     """POSTs the full call transcript + outcome to apps/api. Called from
     bot.run_bot's finally block at call end — never raises, since call-end
     cleanup must complete even if this backend round-trip fails."""
-    if ctx.booking_reference:
+    if ctx.is_authority:
+        outcome = "AUTHORITY_QUERY"
+        booking_reference = None
+    elif ctx.booking_reference:
         outcome = "BOOKED"
         booking_reference = ctx.booking_reference
     elif ctx.cancelled_booking_reference:
@@ -359,7 +396,37 @@ BOOKING_TOOLS: ToolsSchema = ToolsSchema(
     ]
 )
 
-__all__: list[str] = ["BOOKING_TOOLS", "post_call_transcript"]
+_GET_APPOINTMENTS_SUMMARY_SCHEMA = FunctionSchema(
+    name="get_appointments_summary",
+    description=(
+        "List the business's appointments for a day, each with its time, "
+        "customer name, service, and status — use the returned list to answer "
+        "a caller's question about a time window (e.g. 'before 12pm') by "
+        "reading each appointment's time yourself."
+    ),
+    properties={
+        "date": {
+            "type": "string",
+            "description": (
+                "The ISO 8601 date (YYYY-MM-DD) to list appointments for, "
+                "resolved from what the caller said (e.g. 'today', 'tomorrow'). "
+                "Omit only if the caller didn't reference a day at all — "
+                "the backend then defaults to today."
+            ),
+        },
+    },
+    required=[],
+    handler=_handle_get_appointments_summary,
+)
+
+AUTHORITY_TOOLS: ToolsSchema = ToolsSchema(standard_tools=[_GET_APPOINTMENTS_SUMMARY_SCHEMA])
+
+__all__: list[str] = [
+    "AUTHORITY_TOOLS",
+    "BOOKING_TOOLS",
+    "lookup_authority",
+    "post_call_transcript",
+]
 
 # Re-exported for tests that want to wrap/monkeypatch the real handler logic.
 _HANDLERS: dict[str, Any] = {
@@ -367,4 +434,5 @@ _HANDLERS: dict[str, Any] = {
     "book_appointment": _handle_book_appointment,
     "log_inquiry": _handle_log_inquiry,
     "cancel_appointment": _handle_cancel_appointment,
+    "get_appointments_summary": _handle_get_appointments_summary,
 }

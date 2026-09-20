@@ -378,6 +378,7 @@ enum CallOutcome {
   INQUIRY
   NO_OUTCOME
   CANCELLED
+  AUTHORITY_QUERY
 
   @@map("call_outcome")
 }

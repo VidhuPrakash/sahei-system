@@ -28,3 +28,7 @@ class CallContext:
     booking_reference: str | None = None
     inquiry_logged: bool = False
     cancelled_booking_reference: str | None = None
+    # Set once in bot.run_bot from tools.lookup_authority's result. Booking-flow
+    # tool handlers are never reachable in this case since AUTHORITY_TOOLS never
+    # advertises them.
+    is_authority: bool = False

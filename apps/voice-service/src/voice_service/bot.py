@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from dotenv import load_dotenv
 from loguru import logger
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     Frame,
@@ -46,6 +47,7 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
 from redis.asyncio import Redis
 
+from voice_service.authority_prompts import AUTHORITY_SYSTEM_PROMPT, authority_greeting_context
 from voice_service.call_context import CallContext
 from voice_service.prompts import (
     BOOKING_SYSTEM_PROMPT,
@@ -57,7 +59,12 @@ from voice_service.prompts import (
     known_caller_context,
 )
 from voice_service.session_store import CallSession, CallSessionStore
-from voice_service.tools import BOOKING_TOOLS, post_call_transcript
+from voice_service.tools import (
+    AUTHORITY_TOOLS,
+    BOOKING_TOOLS,
+    lookup_authority,
+    post_call_transcript,
+)
 
 load_dotenv(override=True)
 
@@ -191,6 +198,14 @@ class MetricsAndLatencyLogger(FrameProcessor):
         self._turns.turn_started_at = None
 
 
+def _select_llm_config(is_authority: bool) -> tuple[str, ToolsSchema]:
+    """Picks the system prompt and tool schema for this call — the one thing
+    that differs between authority Q&A mode and the normal booking flow."""
+    if is_authority:
+        return AUTHORITY_SYSTEM_PROMPT, AUTHORITY_TOOLS
+    return BOOKING_SYSTEM_PROMPT, BOOKING_TOOLS
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     """Wire Sarvam STT -> Groq dialogue LLM -> Sarvam TTS -> spoken reply."""
     logger.info("Starting dialogue bot")
@@ -206,36 +221,51 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         )
 
     business_id = os.environ["BUSINESS_ID"]
-    session_store = CallSessionStore(Redis.from_url(os.environ["REDIS_URL"], decode_responses=True))
-    existing_session = await session_store.get(call_sid)
-    session = existing_session or CallSession(
-        call_sid=call_sid, business_id=business_id, customer_phone=customer_phone
+    http_client = httpx.AsyncClient(
+        base_url=os.environ["BOOKING_API_URL"],
+        headers={"x-api-key": os.environ["BOOKING_API_KEY"]},
+        timeout=10.0,
     )
-    if existing_session is None:
-        await session_store.upsert(
-            call_sid,
-            business_id=business_id,
-            customer_phone=customer_phone,
-            created_at=datetime.now(BUSINESS_TIMEZONE).isoformat(),
+    is_authority, authority_name = await lookup_authority(http_client, business_id, customer_phone)
+
+    session_store = CallSessionStore(Redis.from_url(os.environ["REDIS_URL"], decode_responses=True))
+    session: CallSession | None = None
+    if not is_authority:
+        existing_session = await session_store.get(call_sid)
+        session = existing_session or CallSession(
+            call_sid=call_sid, business_id=business_id, customer_phone=customer_phone
         )
+        if existing_session is None:
+            await session_store.upsert(
+                call_sid,
+                business_id=business_id,
+                customer_phone=customer_phone,
+                created_at=datetime.now(BUSINESS_TIMEZONE).isoformat(),
+            )
 
     stt = SarvamSTTService(
         api_key=os.environ["SARVAM_API_KEY"],
         settings=SarvamSTTService.Settings(model="saaras:v4", language=Language.ML_IN),
     )
+    system_prompt, context_tools = _select_llm_config(is_authority)
     llm = GroqLLMService(
         api_key=os.environ["GROQ_API_KEY"],
         settings=GroqLLMService.Settings(
             model=os.environ["GROQ_MODEL"],
-            system_instruction=BOOKING_SYSTEM_PROMPT,
+            system_instruction=system_prompt,
         ),
     )
     llm.append_system_instruction(ORG_CONTEXT)
     llm.append_system_instruction(current_date_context(datetime.now(BUSINESS_TIMEZONE)))
-    rehydration_context = known_caller_context(session)
-    if rehydration_context is not None:
-        logger.info("Rehydrated session for call_sid={}: known fields present", call_sid)
-        llm.append_system_instruction(rehydration_context)
+    if is_authority:
+        if authority_name:
+            llm.append_system_instruction(authority_greeting_context(authority_name))
+    else:
+        assert session is not None
+        rehydration_context = known_caller_context(session)
+        if rehydration_context is not None:
+            logger.info("Rehydrated session for call_sid={}: known fields present", call_sid)
+            llm.append_system_instruction(rehydration_context)
     tts = SarvamTTSService(
         api_key=os.environ["SARVAM_API_KEY"],
         sample_rate=8000,
@@ -243,7 +273,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             model="bulbul:v3", voice="mani", language=Language.ML_IN
         ),
     )
-    context = LLMContext(tools=BOOKING_TOOLS)
+    context = LLMContext(tools=context_tools)
     context_aggregator = LLMContextAggregatorPair(
         context,
         # Barge-in: checked against the installed pipecat version's default
@@ -278,13 +308,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     call_context = CallContext(
         business_id=business_id,
         customer_phone=customer_phone,
-        http_client=httpx.AsyncClient(
-            base_url=os.environ["BOOKING_API_URL"],
-            headers={"x-api-key": os.environ["BOOKING_API_KEY"]},
-            timeout=10.0,
-        ),
+        http_client=http_client,
         session_store=session_store,
         call_sid=call_sid,
+        is_authority=is_authority,
     )
     started_at = datetime.now(BUSINESS_TIMEZONE)
 

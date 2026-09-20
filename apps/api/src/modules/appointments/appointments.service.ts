@@ -46,9 +46,15 @@ export class AppointmentsService {
     return this.prisma.appointment.findUnique({ where: { bookingReference } });
   }
 
-  findUpcomingForBusiness(businessId: string, from: Date, to: Date): Promise<Appointment[]> {
+  findUpcomingForBusiness(
+    businessId: string,
+    from: Date,
+    to: Date,
+    status?: AppointmentStatus,
+  ): Promise<AppointmentWithService[]> {
     return this.prisma.appointment.findMany({
-      where: { businessId, scheduledAt: { gte: from, lte: to } },
+      where: { businessId, scheduledAt: { gte: from, lte: to }, ...(status ? { status } : {}) },
+      include: { service: { select: { name: true } } },
       orderBy: { scheduledAt: "asc" },
     });
   }
