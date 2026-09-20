@@ -16,7 +16,7 @@ import type { LogInquiryDto } from "./dto/log-inquiry.dto.js";
  * assumed to run on India Standard Time. `date`/`time` from the LLM are
  * IST wall-clock values, combined here with a fixed +05:30 offset.
  */
-const BUSINESS_UTC_OFFSET = "+05:30";
+export const BUSINESS_UTC_OFFSET = "+05:30";
 const BOOKING_REFERENCE_ATTEMPTS = 5;
 
 function normalizeServiceText(value: string): string {

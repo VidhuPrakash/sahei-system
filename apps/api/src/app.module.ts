@@ -12,6 +12,7 @@ import { ExotelModule } from './modules/exotel/exotel.module.js';
 import { PhoneNumbersModule } from './modules/phone-numbers/phone-numbers.module.js';
 import { OrganizationModule } from './modules/organizations/organization.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
+import { AuthorityCallerModule } from './modules/authority-caller/authority-caller.module.js';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module.js';
     PhoneNumbersModule,
     OrganizationModule,
     AnalyticsModule,
+    AuthorityCallerModule,
   ],
   controllers: [AppController],
   providers: [AppService],
